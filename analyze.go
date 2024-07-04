@@ -56,6 +56,7 @@ func (t *TaskInfo) outFormat(srcLogArr []string) string {
 		record_A = srcLogArr[11]
 	}
 	for _, i := range t.OutputFormat {
+		//由于DRMS日志中没有区分A、4A日志，所以使用DRMS做数据源又像单独输出A、4A日志的话，需要做特殊处理
 		switch i {
 		case 10017:
 			result.WriteString(record_A + "|")
@@ -69,6 +70,64 @@ func (t *TaskInfo) outFormat(srcLogArr []string) string {
 	}
 	return result.String() + "\n"
 
+}
+
+func (t *TaskInfo) WildcardExactMatch(domain string) bool {
+	_, OK := t.ExactDomainFilterRuler.Load(domain)
+	return OK
+}
+
+func (t *TaskInfo) ExactDomainMatch(domain string) bool {
+	return t.DomainFilterRuler.Search(domain)
+}
+
+func (t *TaskInfo) ExactIPMatch(ip string) bool {
+	_, OK := t.IpFilterRuler.Load(ip)
+	return OK
+}
+
+func (t *TaskInfo) Match(target string) bool {
+	//匹配规则：
+	//0 仅IP
+	//1 仅精确域名
+	//2 仅泛域名
+	//3 精确域名+IP
+	//4 泛域名+IP
+
+	switch t.FilterTag {
+	case 0:
+		return t.ExactIPMatch(target)
+	case 1:
+		return t.ExactDomainMatch(target)
+	case 2:
+		return t.WildcardExactMatch(target)
+	case 3:
+		return t.ExactDomainMatch(target) && t.ExactIPMatch(target)
+	case 4:
+		return t.WildcardExactMatch(target) && t.ExactIPMatch(target)
+	default:
+		return false
+	}
+}
+
+func (T Tasks) genFileName(fileName string) string {
+
+	if fileName == "" {
+		return fmt.Sprintf("%s_%s_%s", "250", T.hostIP, time.Now().Format("20060102150405"))
+	}
+
+	str01 := strings.Split(fileName, "_")
+
+	for i, str := range str01 {
+		switch str {
+		case "ip":
+			str01[i] = T.hostIP
+		case "time":
+			str01[i] = time.Now().Format("20060102150405")
+		}
+
+	}
+	return strings.Join(str01, "_")
 }
 
 func (T *Tasks) Filter(srcFileName string, taskId int, fileId int, domainNums map[string]int, lastExecutedDay *time.Time) {
@@ -109,33 +168,18 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int, domainNums ma
 		srcLogArr := strings.Split(scanner.Text(), "|")
 
 		//剔除异常日志
-		if len(srcLogArr) < 7 {
+		if len(srcLogArr) != len(T.InputFormat) {
 			continue
 		}
 
-		//domainNums[srcLogArr[7]] = 1
-
-		//RequestDomain := srcLogArr[7]
-
 		for TaskName, task := range T.TaskInfos {
 
-			switch task.FilterTag {
-			case 0:
-				if task.DomainFilterRuler.Search(srcLogArr[T.DomainTag]) {
-					match[TaskName]++
-					T.TempResultMap[TaskName+strconv.Itoa(taskId)].WriteString(task.outFormat(srcLogArr))
-				}
-			case 2:
-
-				if _, Ok := task.IpFilterRuler.Load(srcLogArr[T.IpTag]); Ok {
-					match[TaskName]++
-					T.TempResultMap[TaskName+strconv.Itoa(taskId)].WriteString(task.outFormat(srcLogArr))
-				}
-			case 4:
-				_, Ok := task.IpFilterRuler.Load(srcLogArr[T.IpTag])
-				if Ok && task.DomainFilterRuler.Search(srcLogArr[T.DomainTag]) {
-
-					match[TaskName]++
+			if task.Match(srcLogArr[T.DomainTag]) {
+				match[TaskName]++
+				//如果输出标记为full，不处理日志格式直接输出
+				if task.OutputFormatString == "full" {
+					T.TempResultMap[TaskName+strconv.Itoa(taskId)].WriteString(scanner.Text() + "\n")
+				} else {
 					T.TempResultMap[TaskName+strconv.Itoa(taskId)].WriteString(task.outFormat(srcLogArr))
 				}
 			}
@@ -162,7 +206,7 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int, domainNums ma
 
 		if task.outPreFileName[taskId] == nil {
 			fileInfo := fileInfo{
-				fileName:   path.Join(task.OutputDir, fmt.Sprintf("%s_%s_%s_%d.gz.tmp", "250", T.hostIP, time.Now().Format("20060102150405"), taskId)),
+				fileName:   path.Join(task.OutputDir, fmt.Sprintf("%s_%d.gz.tmp", T.genFileName(task.OutputFileName), taskId)),
 				CreateTime: time.Now(),
 			}
 			task.outPreFileName[taskId] = &fileInfo

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"gopkg.in/yaml.v3"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,12 +27,12 @@ func transferFormat(inputFormatStr string, outputFormatStr string) []int {
 				break
 			}
 
+			//由于DRMS日志中没有区分A、4A日志，所以使用DRMS做数据源又像单独输出A、4A日志的话，需要做特殊处理
 			if outSeg == "17" {
 				format = append(format, 10017)
 				break
 
 			}
-
 			if outSeg == "18" {
 				format = append(format, 10018)
 				break
@@ -47,6 +49,75 @@ func transferFormat(inputFormatStr string, outputFormatStr string) []int {
 
 	}
 	return format
+}
+
+func taskListRead(FilterListFile string, ListMap map[string]int) {
+
+	File, err := os.Open(FilterListFile)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	scanner := bufio.NewScanner(File)
+	for scanner.Scan() {
+		ListMap[scanner.Text()] = 1
+	}
+
+	File.Close()
+
+}
+
+func IPListToSyncMap(FilterListFile []string) sync.Map {
+
+	var ListMap sync.Map
+	for _, file := range FilterListFile {
+		File, err := os.Open(file)
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		scanner := bufio.NewScanner(File)
+		for scanner.Scan() {
+			//ListMap.Store(scanner.Text(), 1)
+			if !strings.Contains(scanner.Text(), ":") {
+				ips := parseIPFormat(scanner.Text())
+				for _, ip := range ips {
+					ListMap.Store(ip, 1)
+				}
+			} else {
+
+				ListMap.Store(scanner.Text(), 1)
+
+			}
+
+		}
+
+		File.Close()
+	}
+
+	return ListMap
+
+}
+func DomainListToSyncMap(FilterListFile []string) sync.Map {
+
+	var ListMap sync.Map
+	for _, file := range FilterListFile {
+		File, err := os.Open(file)
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		scanner := bufio.NewScanner(File)
+		for scanner.Scan() {
+			ListMap.Store(scanner.Text(), 1)
+
+		}
+
+		File.Close()
+	}
+
+	return ListMap
+
 }
 
 func readConf(filename string) *Tasks {
@@ -90,7 +161,7 @@ func readConf(filename string) *Tasks {
 		}
 
 		//正对DRMS数据源输出集团日志的特殊处理，未来会删除
-		if !(task.OutputFormatString == "jituan") {
+		if !(task.OutputFormatString == "jituan") && !(task.OutputFormatString == "full") {
 			task.OutputFormat = transferFormat(tasks.InputFormat, task.OutputFormatString)
 		}
 
@@ -100,15 +171,39 @@ func readConf(filename string) *Tasks {
 		task.outPreFileName = make(map[int]*fileInfo)
 
 		task.IpFilterRuler = IPListToSyncMap(task.FilterIpRuler)
-		task.DomainFilterRuler = DomainListToTree(task.FilterDomainRuler)
-		if len(task.FilterDomainRuler) != 0 {
+		if task.DomainExactMatch {
+			task.ExactDomainFilterRuler = DomainListToSyncMap(task.FilterDomainRuler)
+
+		} else {
+			task.DomainFilterRuler = DomainListToTree(task.FilterDomainRuler)
+
+		}
+
+		//匹配规则：
+		//0 仅IP
+		//1 仅精确域名
+		//2 仅泛域名
+		//3 精确域名+IP
+		//4 泛域名+IP
+
+		if len(task.FilterIpRuler) != 0 {
 			task.FilterTag = 0
 		}
-		if len(task.FilterIpRuler) != 0 {
-			task.FilterTag = 2
+
+		if len(task.FilterDomainRuler) != 0 {
+			if task.DomainExactMatch {
+				task.FilterTag = 1
+			} else {
+				task.FilterTag = 2
+			}
 		}
+
 		if len(task.FilterIpRuler) != 0 && len(task.FilterDomainRuler) != 0 {
-			task.FilterTag = 4
+			if task.DomainExactMatch {
+				task.FilterTag = 3
+			} else {
+				task.FilterTag = 4
+			}
 		}
 
 		if task.FileMaxSizeString != "" {

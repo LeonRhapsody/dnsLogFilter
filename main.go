@@ -1,16 +1,13 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
-	"fmt"
 	_ "net/http/pprof" // pprof包的init方法会注册5个uri pattern方法到runtime包中
-	"os"
-	"strings"
 	"sync"
 	"time"
 )
 
+// 输出文件信息，用于判断截断条件
 type fileInfo struct {
 	fileName   string
 	CreateTime time.Time
@@ -50,16 +47,20 @@ type TaskInfo struct {
 	FilterIpRuler     []string `yaml:"filter_ip_ruler"`
 	FilterDomainRuler []string `yaml:"filter_domain_ruler"`
 
-	IpFilterRuler     sync.Map
-	DomainFilterRuler *TrieNode
-	V6FilterRuler     *TrieNode
+	DomainExactMatch bool `yaml:"domain_exact_match"`
+
+	IpFilterRuler          sync.Map
+	ExactDomainFilterRuler sync.Map
+	DomainFilterRuler      *TrieNode
+	V6FilterRuler          *TrieNode
 
 	outPreFileName map[int]*fileInfo
 
 	//1:domain only 2:ip only 3:all
 	FilterTag int
 
-	OutputDir string `yaml:"output_dir"`
+	OutputDir      string `yaml:"output_dir"`
+	OutputFileName string `yaml:"output_file_name"`
 
 	OutputFormatString string `yaml:"output_format"`
 	OutputFormat       []int
@@ -90,55 +91,6 @@ type extend struct {
 	User      string
 	Pass      string
 	Path      string
-}
-
-func taskListRead(FilterListFile string, ListMap map[string]int) {
-
-	File, err := os.Open(FilterListFile)
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	scanner := bufio.NewScanner(File)
-	for scanner.Scan() {
-
-		ListMap[scanner.Text()] = 1
-	}
-
-	File.Close()
-
-}
-
-func IPListToSyncMap(FilterListFile []string) sync.Map {
-
-	var ListMap sync.Map
-	for _, file := range FilterListFile {
-		File, err := os.Open(file)
-		if err != nil {
-			fmt.Println(err)
-		}
-
-		scanner := bufio.NewScanner(File)
-		for scanner.Scan() {
-			//ListMap.Store(scanner.Text(), 1)
-			if !strings.Contains(scanner.Text(), ":") {
-				ips := parseIPFormat(scanner.Text())
-				for _, ip := range ips {
-					ListMap.Store(ip, 1)
-				}
-			} else {
-
-				ListMap.Store(scanner.Text(), 1)
-
-			}
-
-		}
-
-		File.Close()
-	}
-
-	return ListMap
-
 }
 
 func main() {

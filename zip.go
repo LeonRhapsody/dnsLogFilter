@@ -150,6 +150,9 @@ func WriteLog(outFilePath string, resultBuffer *bytes.Buffer) {
 }
 
 func (T *Tasks) backupFile(sourcePath string) error {
+	if T.BackupDir == "" {
+		return nil
+	}
 
 	// 从源文件路径中提取文件名
 	filename := filepath.Base(sourcePath)
