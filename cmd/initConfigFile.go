@@ -1,29 +1,26 @@
-#  r,12,3,4,1,2,5,6,7,14,19,15,13
-# tag
-#  0   r     固定值
-#  1   12    响应时间
-#  2   3     DNS服务的IP
-#  3   4     DNS服务器的端口
-#  4   1     请求的IP
-#  5   2     请求者的端口
-#  6   5     会话ID
-#  7   6     请求的域名
-#  8   7     域名请求的类型
-#  9   14    RCode
-#  10  19    cname
-#  11  15    响应内容
-#  12  13    时延
+package cmd
 
-##
+import (
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+)
+
+var configFileName string
+
+var initConfigFileCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Generate a template config file",
+	Long:  `Generate a template config file with default values.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		content := `
 #eth_name: 业务网卡名称（非流量网卡，仅用于获取本机IP，定义文件名称）
 #analyze_threads： 分析线程数目（建议从小到大调试）
 #input_dir：日志输入目录
 #input_format： 指定输入目录的格式
 #backup_dir：日志处理完成之后，日志移动的位置，为空则不移动
 #online_mode： 在线分析/离线分析（在线分析只分析增量文件，分析完成会一直等待新文件产生/离线分析仅分析存量文件，分析完成后退出）
-#              1,6,9,  17,  14,7,19, 18,     3,38,2,"320000"
-#              1,6,12,(17A),14,7,19,(18AAAA),3,13,2,"320000"
-#              9请求时间 12响应时间
 
 eth_name: "en0"
 analyze_threads: 1
@@ -32,8 +29,6 @@ input_format: "r,12,3,4,1,2,5,6,7,14,19,15,13"
 backup_dir: "./backup"
 online_mode: true
 
-
-####
 #enable：模块开关（true开启过滤）
 #output_dir：结果文件输出目录
 #outpur_format: 输出格式，有三种（1、jituan:drms转集团日志格式输出；2、full:直接输出源格式；3、自定义字段格式）
@@ -43,8 +38,6 @@ online_mode: true
 #file_max_size: 不填写默认 200M
 #file_max_time: 不填写默认为9999h，即永不截断
 #domain_exact_match：域名精准过滤。默认会将过滤清单中的域名视为泛域名，如果为true则视为精确域名
-#output_file_name: 输出文件格式，不携带后缀，分隔符暂仅限为_,内置key：ip、time
-
 
 task_infos:
     apt:
@@ -63,8 +56,8 @@ task_infos:
         enable: true
         filter_domain_ruler:
             - "./1.txt"
-        #        filter_ip_ruler:
-        #            - "ip_rule_1.txt"
+        filter_ip_ruler:
+            - "ip_rule_1.txt"
         output_dir: "./data/aliyun"
         output_format: "full"
         domain_exact_match: false
@@ -72,3 +65,17 @@ task_infos:
         is_gzip: false
         file_max_size: 200M
         file_max_time: 1m
+`
+		if err := os.WriteFile(configFileName, []byte(content), 0644); err != nil {
+			fmt.Println("Error writing file:", err)
+		} else {
+			fmt.Printf("Template config file %s created successfully\n", configFileName)
+		}
+		os.Exit(0)
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(initConfigFileCmd)
+	initConfigFileCmd.Flags().StringVarP(&configFileName, "output", "o", "config.yaml.template", "output config file name")
+}

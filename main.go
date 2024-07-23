@@ -2,9 +2,16 @@ package main
 
 import (
 	"bytes"
+	"github.com/LeonRhapsody/DNSLogFilter/cmd"
 	_ "net/http/pprof" // pprof包的init方法会注册5个uri pattern方法到runtime包中
 	"sync"
 	"time"
+)
+
+var (
+	Commit    string
+	GitLog    string
+	BuildTime string
 )
 
 // 输出文件信息，用于判断截断条件
@@ -21,9 +28,9 @@ type Tasks struct {
 	FoundFilePath  chan string
 	InputDir       string `yaml:"input_dir"`
 
-	InputFormat string              `yaml:"input_format"`
-	BackupDir   string              `yaml:"backup_dir"`
-	TaskInfos   map[string]TaskInfo `yaml:"task_infos"`
+	InputFormat string               `yaml:"input_format"`
+	BackupDir   string               `yaml:"backup_dir"`
+	TaskInfos   map[string]*TaskInfo `yaml:"task_infos"`
 
 	OnlineMode bool `yaml:"online_mode"`
 
@@ -94,7 +101,11 @@ type extend struct {
 }
 
 func main() {
+	cmd.Commit = Commit
+	cmd.GitLog = GitLog
+	cmd.BuildTime = BuildTime
 
+	cmd.Execute()
 	Run()
 	//TestIP()
 }

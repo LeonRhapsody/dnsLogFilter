@@ -19,6 +19,7 @@
 vendor/
 backup/
 input/
+data/
 
 
 # Go workspace file

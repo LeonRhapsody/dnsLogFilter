@@ -110,7 +110,7 @@ func (t *TaskInfo) Match(target string) bool {
 	}
 }
 
-func (T Tasks) genFileName(fileName string) string {
+func (T *Tasks) genFileName(fileName string) string {
 
 	if fileName == "" {
 		return fmt.Sprintf("%s_%s_%s", "250", T.hostIP, time.Now().Format("20060102150405"))
@@ -130,10 +130,18 @@ func (T Tasks) genFileName(fileName string) string {
 	return strings.Join(str01, "_")
 }
 
+func (T *Tasks) filterCounterInitialize() map[string]int {
+	filterMatchCounter := make(map[string]int)
+	for taskName, _ := range T.TaskInfos {
+		filterMatchCounter[taskName] = 0
+	}
+	return filterMatchCounter
+}
+
 func (T *Tasks) Filter(srcFileName string, taskId int, fileId int, domainNums map[string]int, lastExecutedDay *time.Time) {
 	defer T.backupFile(srcFileName)
 	nums := 0
-	match := make(map[string]int)
+	filterMatchCounter := T.filterCounterInitialize()
 
 	var TargetContent []byte
 
@@ -175,7 +183,7 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int, domainNums ma
 		for TaskName, task := range T.TaskInfos {
 
 			if task.Match(srcLogArr[T.DomainTag]) {
-				match[TaskName]++
+				filterMatchCounter[TaskName]++
 				//如果输出标记为full，不处理日志格式直接输出
 				if task.OutputFormatString == "full" {
 					T.TempResultMap[TaskName+strconv.Itoa(taskId)].WriteString(scanner.Text() + "\n")
@@ -240,7 +248,7 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int, domainNums ma
 
 	var matchInfo string
 
-	for taskName, matchNum := range match {
+	for taskName, matchNum := range filterMatchCounter {
 		matchInfo = matchInfo + fmt.Sprintf("%s: match %d ,", taskName, matchNum)
 	}
 
