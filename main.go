@@ -4,8 +4,15 @@ import (
 	"bytes"
 	"github.com/LeonRhapsody/DNSLogFilter/cmd"
 	_ "net/http/pprof" // pprof包的init方法会注册5个uri pattern方法到runtime包中
+	"os"
+	"runtime"
 	"sync"
 	"time"
+)
+
+const (
+	valid   = true
+	invalid = false
 )
 
 var (
@@ -18,6 +25,23 @@ var (
 type fileInfo struct {
 	fileName   string
 	CreateTime time.Time
+}
+
+type RunStatus struct {
+	StartTime        string         `json:"start_time"`
+	AnalyzedFileNums int            `json:"analyzed_file_nums"`
+	TaskMatchDetails map[string]int `json:"task_match_details"`
+	statusLock       sync.Mutex
+}
+
+// logIndex 日志字段索引
+type logIndex struct {
+	RequestIPIndex int //请求IP
+	DNSServerIndex int //DNS IP
+	RCodeIndex     int //响应编码
+	DomainIndex    int //请求域名
+	ResultIndex    int //响应结果
+
 }
 
 type Tasks struct {
@@ -33,33 +57,56 @@ type Tasks struct {
 	TaskInfos   map[string]*TaskInfo `yaml:"task_infos"`
 
 	OnlineMode bool `yaml:"online_mode"`
+	adminMode  bool `yaml:"admin_mode"`
 
 	//analyze模块中，每个任务单独一个buffer，用于存储单个文件的分析结果
+	//此举是模拟了sync.pool方法，杜绝频繁申请内存的行为
 	TempResultMap map[string]*bytes.Buffer
 
-	DomainNums map[int]map[string]int
+	//用于离线分析线程的主动终止逻辑
+	wg sync.WaitGroup
 
-	//执行输出域名清单的时间
-	ExecutedHour int `yaml:"executed_hour"`
+	logIndex
+	RunStatus
 
-	IpTag     int
-	DomainTag int
+	//primaryDomainStatistics
+	domainCounter       sync.Map
+	DomainCounterEnable bool `yaml:"domain_counter_enable"`
+	ExecutedHour        int  `yaml:"executed_hour"` //执行输出域名清单的时间
+	lastExecutedDay     *time.Time
+
+	//客户端IP
+
+	//大一统规则池
+	mapCache sync.Map
+	//大一统规则池
+	treeCache *TrieNode
 }
 
 type TaskInfo struct {
+	//是否启用
 	Enable bool `yaml:"enable"`
 
 	TaskType string `yaml:"task_type"`
+	TaskID   int
 
-	FilterIpRuler     []string `yaml:"filter_ip_ruler"`
+	//是否将IP过滤修改为解析IP
+	IsMatchResolveIP bool `yaml:"is_match_resolve_ip"`
+
+	//客户端IP
+	FilterIpRuler   []string `yaml:"filter_ip_ruler"`
+	FilterIpV6Ruler []string `yaml:"filter_ipv6_ruler"`
+
+	//请求域名
 	FilterDomainRuler []string `yaml:"filter_domain_ruler"`
 
-	DomainExactMatch bool `yaml:"domain_exact_match"`
+	//客户端IP
+	IpFilterRuler sync.Map
 
-	IpFilterRuler          sync.Map
-	ExactDomainFilterRuler sync.Map
-	DomainFilterRuler      *TrieNode
-	V6FilterRuler          *TrieNode
+	IpFilterV6Ruler *TrieNode
+
+	//泛域名
+	DomainFilterRuler *TrieNode
 
 	outPreFileName map[int]*fileInfo
 
@@ -76,8 +123,7 @@ type TaskInfo struct {
 
 	FileMaxSizeString string `yaml:"file_max_size"`
 	FileMaxSize       int
-
-	FileMaxTime time.Duration `yaml:"file_max_time"`
+	FileMaxTime       time.Duration `yaml:"file_max_time"`
 
 	extend
 }
@@ -101,11 +147,27 @@ type extend struct {
 }
 
 func main() {
+
+	//
+	//tree := V6ListToTree([]string{"./v6.list"})
+	//fmt.Println(tree.V6Search("2409:8720:0C01:2B"))
+	//fmt.Println(tree.V6Search("2409:8720:0C01:2A"))
+	//fmt.Println(tree.V6Search("2409:8720:0C01:2A:"))
+	//fmt.Println(tree.V6Search("2409:8720:0C01:2A::"))
+	//fmt.Println(tree.V6Search("2409:8720:0C01:2A::1"))
+	//fmt.Println(tree.V6Search("2409:8720:0C01:2A:1234::1"))
+	////
+	//os.Exit(1)
+
+	if runtime.GOOS == "darwin" {
+		os.RemoveAll("/Users/leon/Documents/02-code/go/src/github.com/LeonRhapsody/DNSLogFilter/data")
+	}
+
 	cmd.Commit = Commit
 	cmd.GitLog = GitLog
 	cmd.BuildTime = BuildTime
-
 	cmd.Execute()
+
+	//go http.ListenAndServe("127.0.0.1:8080", nil)
 	Run()
-	//TestIP()
 }

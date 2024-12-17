@@ -53,54 +53,44 @@ func formatIP(ip string) string {
 	return formattedIP
 }
 
-func TestIP() {
-	ipFormats := []string{
-		"1.1.1.1",
-		"1.1.1.1/24",
-		"1.1.1.1-1.1.1.255",
-	}
+func parseIPFormat(ipFormat string) ([]string, error) {
+	reIPv4 := regexp.MustCompile(`^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]+)$`)
+	reCIDR := regexp.MustCompile(`^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]+)/([0-9]|[1-2][0-9]|3[0-2])$`)
+	reRange := regexp.MustCompile(`^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]+)-((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]+)$`)
 
-	for _, ipFormat := range ipFormats {
-		ips := parseIPFormat(ipFormat)
-		for _, ip := range ips {
-			fmt.Println(ip)
-		}
+	if reIPv4.MatchString(ipFormat) {
+		return []string{ipFormat}, nil
 	}
-}
-
-func parseIPFormat(ipFormat string) []string {
-	reCIDR := regexp.MustCompile(`^(\d+\.\d+\.\d+\.\d+)/(\d+)$`)
-	reRange := regexp.MustCompile(`^(\d+\.\d+\.\d+\.\d+)-(\d+\.\d+\.\d+\.\d+)$`)
 
 	// Check for CIDR notation
 	if reCIDR.MatchString(ipFormat) {
+
 		ip, ipNet, err := net.ParseCIDR(ipFormat)
 		if err != nil {
-			fmt.Println("Error parsing CIDR:", err)
-			return nil
+			return nil, err
 		}
 		var ips []string
 		for ip := ip.Mask(ipNet.Mask); ipNet.Contains(ip); inc(ip) {
 			ips = append(ips, ip.String())
 		}
-		return ips
+		return ips, nil
 	}
 
 	// Check for IP range notation
 	if reRange.MatchString(ipFormat) {
-		parts := reRange.FindStringSubmatch(ipFormat)
-		startIP := net.ParseIP(parts[1])
-		endIP := net.ParseIP(parts[2])
+		parts := strings.Split(ipFormat, "-")
+		startIP := net.ParseIP(parts[0])
+		endIP := net.ParseIP(parts[1])
 
 		var ips []string
 		for ip := startIP; ip.Equal(endIP) || bytesLessEqual(ip, endIP); inc(ip) {
 			ips = append(ips, ip.String())
 		}
-		return ips
+		return ips, nil
 	}
 
 	// Single IP address
-	return []string{ipFormat}
+	return nil, fmt.Errorf("not match")
 }
 
 func inc(ip net.IP) {
@@ -188,4 +178,12 @@ func bytesLessIP(a, b net.IP) bool {
 		}
 	}
 	return false
+}
+
+func isIPInRange(ip, cidr string) (bool, error) {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return false, err
+	}
+	return ipNet.Contains(net.ParseIP(ip)), nil
 }

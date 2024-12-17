@@ -5,13 +5,19 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
+)
+
+const (
+	Exact    byte = 1
+	Multiple byte = 2
+	notMatch byte = 0
 )
 
 // TrieNode represents a node in the trie
 type TrieNode struct {
-	children map[string]*TrieNode
-	isEnd    bool // isEnd marks the end of a domain
+	children  map[string]*TrieNode
+	isEnd     bool // isEnd marks the end of a domain
+	matchType byte
 }
 
 // NewTrieNode creates a new Trie node
@@ -19,6 +25,7 @@ func NewTrieNode() *TrieNode {
 	return &TrieNode{children: make(map[string]*TrieNode)}
 }
 
+// Insert inserts a domain into the trie
 // Insert inserts a domain into the trie
 func (t *TrieNode) Insert(domain string) {
 	parts := splitDomain(domain)
@@ -32,23 +39,100 @@ func (t *TrieNode) Insert(domain string) {
 	node.isEnd = true
 }
 
-// Search searches for a domain in the trie
-func (t *TrieNode) Search(domain string) bool {
-	parts := splitDomain(domain)
+func (t *TrieNode) v6Insert(domain string) {
+	parts := strings.Split(domain, ":")
 	node := t
 	for _, part := range parts {
-		if node.isEnd {
+		if _, ok := node.children[part]; !ok {
+			node.children[part] = NewTrieNode()
+		}
+		node = node.children[part]
+	}
+	node.isEnd = true
+}
+
+func (t *TrieNode) print() {
+	printNode(t)
+}
+
+func printNode(node *TrieNode) {
+	for nodeName, trieNode := range node.children {
+		fmt.Printf("NodeName: %s, Address: %p, isEND: %v,Value: %+v\n", nodeName, trieNode, trieNode.isEnd, trieNode)
+		printNode(trieNode)
+	}
+}
+
+// Search searches for a domain in the trie
+func (t *TrieNode) Search(domain string) bool {
+	//todo: search时，node.isEND代表的是上一级的结果，当前层级的isEND应该在下一级展示,暂未研究是否可以优化insert
+
+	parts := splitDomain(domain)
+	node := t
+
+	for i, part := range parts {
+
+		//fmt.Printf("i:%d, Search for: %s, isEnd: %v, MatchType: %v\n", i, part, node.isEnd, node.matchType)
+		//if _, ok := node.children[part]; ok {
+		//	fmt.Println(node.children[part].children)
+		//}
+
+		if _, ok := node.children[part]; !ok {
+			return false
+		}
+
+		//如果下一级存在*的匹配，立即返回true
+		if _, ok := node.children[part].children["*"]; ok {
+			return true
+		}
+
+		if node.children[part].isEnd && i == len(parts)-1 {
 			return true // Match found due to wildcard
+		}
+
+		node = node.children[part]
+
+	}
+
+	return false
+}
+
+// V6Search searches for a domain in the trie
+func (t *TrieNode) V6Search(domain string) bool {
+	//todo: search时，node.isEND代表的是上一级的结果，当前层级的isEND应该在下一级展示,暂未研究是否可以优化insert
+
+	parts := strings.Split(domain, ":")
+	node := t
+
+	for i, part := range parts {
+
+		//fmt.Printf("i:%d, Search for: %s, isEnd: %v, MatchType: %v\n", i, part, node.isEnd, node.matchType)
+		//if _, ok := node.children[part]; ok {
+		//	fmt.Println(node.children[part].children)
+		//}
+
+		if node.children == nil {
+			return false
 		}
 		if _, ok := node.children[part]; !ok {
 			return false
 		}
+
+		//如果下一级存在*的匹配，立即返回true
+		if _, ok := node.children[part].children["*"]; ok {
+			return true
+		}
+
+		if node.children[part].isEnd && i == len(parts)-1 {
+			return true // Match found due to wildcard
+		}
+
 		node = node.children[part]
+
 	}
-	return node.isEnd
+
+	return false
 }
 
-// Traverse 方法遍历 Trie 并打印所有域名
 // Traverse 方法遍历 Trie 并打印所有域名
 func (t *TrieNode) Traverse(parts []string) {
 
@@ -69,29 +153,29 @@ func (t *TrieNode) Traverse(parts []string) {
 
 }
 
-func reverseSlice(s []string) []string {
-	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
-		s[i], s[j] = s[j], s[i] // Swap elements
-	}
-	return s
-}
-
-// splitDomain splits the domain into parts
+// splitDomain splits the domain into parts and reverses the order
 func splitDomain(domain string) []string {
 	// For simplicity, we assume the domain parts are separated by dots.
-	// In a real-world scenario, you should consider IDN (internationalized domain names) and punycode.
-
 	parts := strings.Split(domain, ".")
 
-	return reverseSlice(parts)
+	// 反转切片
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i] // Swap elements
+	}
+	return parts
 }
 
-func DomainListToTree(filename []string) *TrieNode {
+func V6ListToTree(filename []string) *TrieNode {
+	counter := 0
+	var files string
+
 	trie := NewTrieNode()
 
 	// Insert domains into the trie
 
 	for _, file := range filename {
+		files = files + "/" + file
+
 		File, err := os.Open(file)
 		if err != nil {
 			fmt.Println(err)
@@ -102,53 +186,38 @@ func DomainListToTree(filename []string) *TrieNode {
 			if scanner.Text() == "" {
 				continue
 			}
-			trie.Insert(scanner.Text())
+			trie.v6Insert(scanner.Text())
+			counter++
 		}
 
 		File.Close()
 	}
+	fmt.Printf("%s read %d v6 rules\n", files, counter)
 
 	return trie
 }
 
 func treeTest() {
-	trie := NewTrieNode()
+	tree := NewTrieNode()
 
-	// Insert domains into the trie
+	tree.Insert("www.baidu.com")
+	tree.Insert("*.www.sina.com")
+	//tree.Insert("sina.com")
 
-	File, err := os.Open("1w.txt")
-	if err != nil {
-		fmt.Println(err)
-	}
+	tree.print()
+	fmt.Println(tree.Search("3.2.1.www.baidu.com"))
+	fmt.Println(tree.Search("2.1.www.baidu.com"))
+	fmt.Println(tree.Search("1.www.baidu.com"))
+	fmt.Println(tree.Search("www.baidu.com"))
+	fmt.Println(tree.Search("aaa.baidu.com"))
+	fmt.Println(tree.Search("baidu.com"))
+	fmt.Println(tree.Search("com"))
 
-	scanner := bufio.NewScanner(File)
-	for scanner.Scan() {
-		trie.Insert(scanner.Text())
-	}
-
-	File.Close()
-
-	File2, err := os.Open("target.list")
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	match := 0
-	nums := 0
-	start := time.Now()
-	scanner2 := bufio.NewScanner(File2)
-	for scanner2.Scan() {
-		nums++
-
-		if trie.Search(scanner2.Text()) {
-			match++
-			fmt.Println(scanner2.Text())
-		}
-	}
-
-	File2.Close()
-
-	times := time.Since(start)
-	qps := int(float64(nums) / times.Seconds())
-	fmt.Printf("times: %s,qps: %d,match %d", times, qps, match)
+	fmt.Println(tree.Search("3.2.1.www.sina.com"))
+	fmt.Println(tree.Search("2.1.www.sina.com"))
+	fmt.Println(tree.Search("1.www.sina.com"))
+	fmt.Println(tree.Search("www.sina.com"))
+	fmt.Println(tree.Search("aaa.sina.com"))
+	fmt.Println(tree.Search("sina.com"))
+	fmt.Println(tree.Search("com"))
 }

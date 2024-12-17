@@ -1,10 +1,281 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh">
 <head>
-  <meta charset="UTF-8">
-  <title>$Title$</title>
+    <meta charset="UTF-8">
+    <title>配置管理系统</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+        function showContent(file) {
+            if (file) {
+                fetch("/show?file=" + file)
+                    .then(response => response.text())
+                    .then(data => {
+                        document.getElementById("outputDisplay").innerHTML = "<h2>" + file + "</h2><button class=\"delete-btn\" onclick=\"deleteFile(" + file + "); event.stopPropagation();\">删除</button><pre>" + data + "</pre>";
+                    });
+                clearOutput();
+                document.getElementById("addForm").style.display = "none";
+            }
+        }
+
+        function showConfig() {
+            fetch("/config")
+                .then(response => response.text())
+                .then(data => {
+                    document.getElementById("outputDisplay").innerHTML = data;
+                });
+            clearOutput();
+            document.getElementById("addForm").style.display = "none";
+        }
+
+        function saveFile() {
+            const name = document.getElementById("fileName").value;
+            const content = document.getElementById("fileContentInput").value;
+            if (name && content) {
+                fetch("/save", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ name: name, content: content })
+                }).then(response => {
+                    if (response.ok) {
+                        alert("保存成功！");
+                        document.getElementById("fileName").value = '';
+                        document.getElementById("fileContentInput").value = '';
+                        loadFiles();
+                        clearOutput();
+                    } else {
+                        alert("保存失败！");
+                    }
+                });
+            } else {
+                alert("请填写文件名称和内容！");
+            }
+        }
+
+        function deleteFile(file) {
+            if (confirm("您确定要删除这个文件吗？")) {
+                fetch("/delete?file=" + file, {
+                    method: "DELETE"
+                }).then(response => {
+                    if (response.ok) {
+                        alert("删除成功！");
+                        loadFiles();
+                        clearOutput();
+                    } else {
+                        alert("删除失败！");
+                    }
+                });
+            }
+        }
+
+        function updateConfig() {
+            const formData = new FormData(document.getElementById("configForm"));
+            const jsonData = {};
+            formData.forEach((value, key) => {
+                jsonData[key] = value;
+            });
+
+            fetch("/updateConfig", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(jsonData)
+            })
+                .then(response => {
+                    if (response.ok) {
+                        alert("配置已保存！");
+                        return response.text();
+                    }
+                    throw new Error("网络错误");
+                })
+                .then(data => {
+                    console.log(data);
+                })
+                .catch(error => {
+                    console.error("错误:", error);
+                });
+        }
+
+        function loadFiles() {
+            fetch("/")
+                .then(response => response.json())
+                .then(data => {
+                    const ipList = document.getElementById("ipFileList");
+                    const domainList = document.getElementById("domainFileList");
+                    ipList.innerHTML = '';
+                    domainList.innerHTML = '';
+
+                    data.ipFiles.forEach(file => {
+                        ipList.innerHTML += '<div class="menu-item" onclick="showContent(\'' + file + '\')">' + file + ' <button class="delete-btn" onclick="deleteFile(\'' + file + '\'); event.stopPropagation();">删除</button></div>';
+                    });
+                    data.domainFiles.forEach(file => {
+                        domainList.innerHTML += '<div class="menu-item" onclick="showContent(\'' + file + '\')">' + file + ' <button class="delete-btn" onclick="deleteFile(\'' + file + '\'); event.stopPropagation();">删除</button></div>';
+                    });
+                });
+        }
+
+        function showAddForm(type) {
+            clearOutput();
+            document.getElementById("addForm").style.display = "block";
+            document.getElementById("fileName").value = '';
+            document.getElementById("fileContentInput").value = '';
+        }
+
+        function clearOutput() {
+            document.getElementById("outputDisplay").innerHTML = "";
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: #f0f4f8;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        .sidebar {
+            width: 200px;
+            background-color: #2c3e50;
+            color: white;
+            padding: 20px;
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+        }
+        .sidebar h3, .sidebar h4 {
+            cursor: pointer;
+            margin: 10px 0;
+            transition: color 0.3s;
+        }
+        .sidebar h3:hover, .sidebar h4:hover {
+            color: #3498db;
+        }
+        .content {
+            flex: 1;
+            padding: 20px;
+            background-color: #ecf0f1;
+            overflow-y: auto;
+        }
+        .submenu {
+            display: none;
+            margin-left: 10px;
+            padding-left: 10px;
+            border-left: 2px solid #3498db;
+        }
+        .menu-item {
+            cursor: pointer;
+            background-color: #bdc3c7;
+            margin: 5px 0;
+            padding: 10px;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        .menu-item:hover {
+            background-color: #95a5a6;
+        }
+        #fileContent h2 {
+            margin: 0 0 20px;
+        }
+        #addForm {
+            background-color: white;
+            border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            display: none;
+        }
+        #fileName, #fileContentInput, input[type="text"], select {
+            width: calc(100% - 22px);
+            padding: 10px;
+            border: 1px solid #bdc3c7;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            background-color: #3498db;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            width: 100%;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .delete-btn {
+            padding: 5px 8px;
+            border: none;
+            background-color: #e74c3c;
+            color: white;
+            border-radius: 3px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .delete-btn:hover {
+            background-color: #c0392b;
+        }
+        #outputDisplay {
+            background-color: white;
+            border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            margin-top: 20px;
+        }
+    </style>
 </head>
 <body>
-$END$
+<div class="container">
+    <div class="sidebar">
+        <h3 onclick="toggleSubMenu('ipSubmenu')">IP清单配置</h3>
+        <div id="ipSubmenu" class="submenu">
+            <h4 onclick="toggleSubMenu('viewIP')">查看清单</h4>
+            <div id="viewIP" class="submenu">
+                <div id="ipFileList">
+                    {{range .IPFiles}}<div class="menu-item" onclick="showContent('{{.}}')">{{.}} <button class="delete-btn" onclick="deleteFile('{{.}}'); event.stopPropagation();">删除</button></div>{{end}}
+                </div>
+            </div>
+            <h4 onclick="showAddForm('ip')">增加清单</h4>
+        </div>
+        <h3 onclick="toggleSubMenu('domainSubmenu')">域名清单配置</h3>
+        <div id="domainSubmenu" class="submenu">
+            <h4 onclick="toggleSubMenu('viewDomain')">查看清单</h4>
+            <div id="viewDomain" class="submenu">
+                <div id="domainFileList">
+                    {{range .DomainFiles}}<div class="menu-item" onclick="showContent('{{.}}')">{{.}} <button class="delete-btn" onclick="deleteFile('{{.}}'); event.stopPropagation();">查看</button><button class="delete-btn" onclick="deleteFile('{{.}}'); event.stopPropagation();">删除</button></div>{{end}}
+                </div>
+            </div>
+            <h4 onclick="showAddForm('domain')">增加清单</h4>
+        </div>
+        <h3 onclick="showConfig()">查看运行配置</h3>
+    </div>
+    <div class="content" id="fileContent">
+        <div id="addForm">
+            <h3>增加清单</h3>
+            <label for="fileName">文件名称:</label>
+            <input type="text" id="fileName">
+            <br>
+            <label for="fileContentInput">清单内容:</label>
+            <textarea id="fileContentInput" rows="10"></textarea>
+            <button onclick="saveFile()">保存</button>
+        </div>
+        <div id="outputDisplay">
+            <!-- 输出内容展示区域 -->
+        </div>
+    </div>
+</div>
+<script>
+    function toggleSubMenu(id) {
+        var submenu = document.getElementById(id);
+        submenu.style.display = submenu.style.display === "none" || submenu.style.display === "" ? "block" : "none";
+    }
+</script>
 </body>
 </html>

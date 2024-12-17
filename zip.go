@@ -5,10 +5,13 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 )
 
 func IsGzipFile(filename string) bool {
@@ -61,6 +64,29 @@ func UngzipToFile(filename string) (string, error) {
 	}
 
 	return outputFilename, nil
+}
+
+// UnGzipFile 解压缩 gzip 文件并返回内容
+func UnGzipFile(fileName string) ([]byte, error) {
+	file, err := os.Open(fileName)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+	defer gzReader.Close()
+
+	// 读取解压缩后的内容
+	unzippedData, err := io.ReadAll(gzReader)
+	if err != nil {
+		return nil, err
+	}
+
+	return unzippedData, nil
 }
 
 func UngzipToBuffer(filename string, buffer *bytes.Buffer) error {
@@ -163,24 +189,71 @@ func (T *Tasks) backupFile(sourcePath string) error {
 	err := os.Rename(sourcePath, destinationPath)
 	if err != nil {
 		// 如果发生错误，打印错误并退出
-		fmt.Println("Error moving file:", err)
+		log.Fatal("Error moving file:", err)
 		return err
 	}
-	fmt.Printf("[Backup] %s to %s\n", sourcePath, destinationPath)
+	log.Printf("[Backup] %s to %s\n", sourcePath, destinationPath)
 
 	return nil
 }
 
-func saveMap(map1 map[string]int, outFilePath string) {
+func saveMap(map1 sync.Map, outFilePath string) {
 	var result strings.Builder
 
-	// 如果你需要保存键值对，可以像这样修改循环体
-	for domain, _ := range map1 {
-		result.WriteString(domain + "\n")
+	map1.Range(func(key, value any) bool {
+		result.WriteString(fmt.Sprintf("%s|%d\n", key, value.(int)))
+		return true
+
+	})
+
+	// 打开（或创建）文件，准备追加内容
+	file, err := os.OpenFile(outFilePath, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0666)
+	if err != nil {
+		fmt.Println("无法打开文件:", err)
+		return // 如果打开文件失败，提前退出函数
+	}
+	defer file.Close()
+
+	// 将字符串读取器传递给 io.Copy
+	_, err = io.Copy(file, strings.NewReader(result.String()))
+	if err != nil {
+		fmt.Printf("%s 写入失败: %v\n", outFilePath, err)
+	}
+
+	fmt.Printf("[save] write domain list to %s\n", outFilePath)
+}
+
+func sortByValueAndSaveMap(map1 sync.Map, outFilePath string) {
+	var result strings.Builder
+	var entries []struct {
+		Key   string
+		Value int
+	}
+
+	// 遍历 map 并收集键值对
+	map1.Range(func(key, value any) bool {
+		entries = append(entries, struct {
+			Key   string
+			Value int
+		}{
+			Key:   key.(string),
+			Value: value.(int),
+		})
+		return true
+	})
+
+	// 根据值进行倒排排序
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Value > entries[j].Value // 倒序
+	})
+
+	// 将排序后的键值对写入结果
+	for _, entry := range entries {
+		result.WriteString(fmt.Sprintf("%s|%d\n", entry.Key, entry.Value))
 	}
 
 	// 打开（或创建）文件，准备追加内容
-	file, err := os.OpenFile(outFilePath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
+	file, err := os.OpenFile(outFilePath, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0666)
 	if err != nil {
 		fmt.Println("无法打开文件:", err)
 		return // 如果打开文件失败，提前退出函数

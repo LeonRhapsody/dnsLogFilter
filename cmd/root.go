@@ -2,9 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-
 	"github.com/spf13/cobra"
+	"log"
 )
 
 // rootCmd represents the base command
@@ -22,8 +21,8 @@ var rootCmd = &cobra.Command{
 // Execute executes the root command.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		log.Fatal(err)
+		return
 	}
 }
 

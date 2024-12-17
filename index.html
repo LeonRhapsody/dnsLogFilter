@@ -1,10 +1,77 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>$Title$</title>
-</head>
-<body>
-$END$
-</body>
-</html>
+
+<h2>运行主配置</h2>
+<form id="configForm">
+  <label for="ethName">eth_name:</label>
+  <input type="text" id="ethName" name="eth_name" value="{{.EthName}}"><br>
+
+  <label for="analyzeThreads">analyze_threads:</label>
+  <input type="text" id="analyzeThreads" name="analyze_threads" value="{{.AnalyzeThreads}}"><br>
+
+  <label for="inputDir">input_dir:</label>
+  <input type="text" id="inputDir" name="input_dir" value="{{.InputDir}}"><br>
+
+  <label for="inputFormat">input_format:</label>
+  <input type="text" id="inputFormat" name="input_format" value="{{.InputFormat}}"><br>
+
+  <label for="backupDir">backup_dir:</label>
+  <input type="text" id="backupDir" name="backup_dir" value="{{.BackupDir}}"><br>
+
+  <label for="onlineMode">online_mode:</label>
+  <select id="onlineMode" name="online_mode">
+    <option value="true" {{if .OnlineMode}}selected{{end}}>是</option>
+    <option value="false" {{if not .OnlineMode}}selected{{end}}>否</option>
+  </select><br>
+
+  <h3>task_infos</h3>
+  {{range $task, $info := .TaskInfos}}
+  <div style="margin-left: 20px;">
+    <h4>{{$task}}</h4>
+    <div style="margin-left: 20px;">
+      <label for="{{$task}}_enable">enable:</label>
+      <select id="{{$task}}_enable" name="{{$task}}_enable">
+        <option value="true" {{if $info.enable}}selected{{end}}>启用</option>
+        <option value="false" {{if not $info.enable}}selected{{end}}>关闭</option>
+      </select><br>
+
+      <label for="{{$task}}_filter_ip_ruler">filter_ip_ruler:</label>
+      <select id="{{$task}}_filter_ip_ruler" name="{{$task}}_filter_ip_ruler">
+        <option value="default">{{$info.filter_ip_ruler}}</option>
+        {{range .IPFiles}}
+        <option value="{{.}}">{{.}}</option>
+        {{end}}
+      </select><br>
+
+      <label for="{{$task}}_filter_domain_ruler">filter_domain_ruler:</label>
+      <select id="{{$task}}_filter_domain_ruler" name="{{$task}}_filter_domain_ruler">
+        <option value="default">{{$info.filter_domain_ruler}}</option>
+        {{range .DomainFiles}}
+        <option value="{{.}}">{{.}}</option>
+        {{end}}
+      </select><br>
+
+      <label for="{{$task}}_output_dir">output_dir:</label>
+      <input type="text" id="{{$task}}_output_dir" name="{{$task}}_output_dir" value="{{$info.output_dir}}"><br>
+
+      <label for="{{$task}}_output_format">output_format:</label>
+      <input type="text" id="{{$task}}_output_format" name="{{$task}}_output_format" value="{{$info.output_format}}"><br>
+
+      <label for="{{$task}}_is_gzip">is_gzip:</label>
+      <select id="{{$task}}_is_gzip" name="{{$task}}_is_gzip">
+        <option value="true" {{if $info.is_gzip}}selected{{end}}>压缩</option>
+        <option value="false" {{if not $info.is_gzip}}selected{{end}}>不压缩</option>
+      </select><br>
+
+      <label for="{{$task}}_file_max_size">file_max_size:</label>
+      <input type="text" id="{{$task}}_file_max_size" name="{{$task}}_file_max_size" value="{{$info.file_max_size}}"><br>
+
+      <label for="{{$task}}_file_max_time">file_max_time:</label>
+      <input type="text" id="{{$task}}_file_max_time" name="{{$task}}_file_max_time" value="{{$info.file_max_time}}"><br>
+
+      <label for="{{$task}}_output_file_name">output_file_name:</label>
+      <input type="text" id="{{$task}}_output_file_name" name="{{$task}}_output_file_name" value="{{$info.output_file_name}}"><br>
+    </div>
+  </div>
+  {{end}}
+
+  <button type="button" onclick="updateConfig()">保存配置</button>
+</form>
