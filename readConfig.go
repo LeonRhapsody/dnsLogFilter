@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"gopkg.in/yaml.v3"
+	"io"
 	"log"
 	"os"
 	"runtime"
@@ -51,12 +52,11 @@ func transferFormat(inputFormatStr string, outputFormatStr string) []int {
 	return format
 }
 
-func IPListToCache(FilterListFile []string) (sync.Map, *TrieNode) {
+func IPListToCache(FilterListFile []string) sync.Map {
 	counter := 0
 
 	var files string
 	var ListMap sync.Map
-	trie := NewTrieNode()
 	for _, file := range FilterListFile {
 		files = files + "/" + file
 
@@ -85,6 +85,52 @@ func IPListToCache(FilterListFile []string) (sync.Map, *TrieNode) {
 	return ListMap
 
 }
+
+func IPListToTxt(FilterListFile []string) {
+	counter := 0
+
+	var buffer bytes.Buffer
+	var files string
+
+	for _, file := range FilterListFile {
+		files = files + "/" + file
+
+		File, err := os.Open(file)
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		scanner := bufio.NewScanner(File)
+		for scanner.Scan() {
+			ips, err := parseIPFormat(scanner.Text())
+			if err != nil {
+				fmt.Println(err)
+			}
+			for _, ip := range ips {
+				buffer.WriteString(ip + "\n")
+				counter++
+			}
+
+		}
+
+		File.Close()
+	}
+	fmt.Printf("%s read %d ip rules\n", files, counter)
+	file, err := os.OpenFile("ipv4.txt", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
+	if err != nil {
+		fmt.Println("无法打开文件:", err)
+	}
+	defer file.Close()
+	//defer L.FileLock.Unlock()
+
+	_, err = io.Copy(file, &buffer)
+	if err != nil {
+		fmt.Printf("%s 写入失败:%e", "ipv4.txt", err)
+
+	}
+
+}
+
 func DomainListToTree(filename []string) *TrieNode {
 	counter := 0
 	var files string

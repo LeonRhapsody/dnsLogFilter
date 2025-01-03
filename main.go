@@ -148,6 +148,8 @@ type extend struct {
 
 func main() {
 
+	//IPListToTxt([]string{"./v4.list"})
+	//os.Exit(1)
 	//
 	//tree := V6ListToTree([]string{"./v6.list"})
 	//fmt.Println(tree.V6Search("2409:8720:0C01:2B"))
