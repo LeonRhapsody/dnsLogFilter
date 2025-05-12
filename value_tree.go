@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// ValueTrieNode represents a node in the trie
+// ValueTrieNode represents a node in the v6Trie
 type ValueTrieNode struct {
 	children  map[string]*ValueTrieNode
 	isEnd     bool // isEnd marks the end of a domain
@@ -19,7 +19,7 @@ func NewValueTrieNode() *ValueTrieNode {
 	return &ValueTrieNode{children: make(map[string]*ValueTrieNode)}
 }
 
-// Insert inserts a domain into the trie
+// Insert inserts a domain into the v6Trie
 func (t *ValueTrieNode) Insert(key string, value int) {
 
 	var parts []string
@@ -53,7 +53,7 @@ func printNode2(node *ValueTrieNode) {
 	}
 }
 
-// Search SearchDomain Search searches for a domain in the trie
+// Search SearchDomain Search searches for a domain in the v6Trie
 func (t *ValueTrieNode) Search(key string) (bool, []int) {
 
 	var parts []string

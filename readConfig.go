@@ -52,38 +52,76 @@ func transferFormat(inputFormatStr string, outputFormatStr string) []int {
 	return format
 }
 
-func IPListToCache(FilterListFile []string) sync.Map {
-	counter := 0
+func IPListToCache(filterListFiles []string) (*sync.Map, *TrieNode, int) {
+	var (
+		v4Counter     int
+		v6Counter     int
+		ipfileterMode int
 
-	var files string
-	var ListMap sync.Map
-	for _, file := range FilterListFile {
-		files = files + "/" + file
+		listMap sync.Map
+	)
+	trie := NewTrieNode()
 
-		File, err := os.Open(file)
-		if err != nil {
-			fmt.Println(err)
-		}
-
-		scanner := bufio.NewScanner(File)
-		for scanner.Scan() {
-			ips, err := parseIPFormat(scanner.Text())
-			if err != nil {
-				fmt.Println(err)
-			}
-			for _, ip := range ips {
-				ListMap.Store(ip, 1)
-				counter++
-			}
-
-		}
-
-		File.Close()
+	if len(filterListFiles) == 0 {
+		return &listMap, trie, 0
 	}
-	fmt.Printf("%s read %d ip rules\n", files, counter)
 
-	return ListMap
+	for _, file := range filterListFiles {
 
+		// 打开文件
+		fileHandle, err := os.Open(file)
+		if err != nil {
+			fmt.Printf("Error opening file %s: %v\n", file, err)
+			continue
+		}
+		defer fileHandle.Close() // 确保文件句柄被关闭
+
+		// 逐行扫描文件内容
+		scanner := bufio.NewScanner(fileHandle)
+		for scanner.Scan() {
+
+			line := strings.TrimSpace(scanner.Text())
+
+			if line == "" {
+				continue // 跳过空行
+			}
+
+			if strings.Contains(line, ":") {
+				trie.v6Insert(line)
+				v6Counter++
+			} else {
+				ips, err := parseIPFormat(scanner.Text())
+				if err != nil {
+					panic(fmt.Sprintf("Error parsing IP format: %v\n", err))
+				}
+
+				// 将 IP 存入 sync.Map
+				for _, ip := range ips {
+					listMap.Store(ip, struct{}{}) // 使用空结构体减少内存占用
+					v4Counter++
+				}
+			}
+
+		}
+
+		// 检查扫描错误
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("Error reading file %s: %v\n", file, err)
+		}
+	}
+
+	fmt.Printf("Read %d v4IP and %d v6IP rules from files: %s\n", v4Counter, v6Counter, strings.Join(filterListFiles, ", "))
+
+	if v4Counter > 0 {
+		if v6Counter > 0 {
+			ipfileterMode = 3
+		} else {
+			ipfileterMode = 2
+		}
+		ipfileterMode = 1
+	}
+
+	return &listMap, trie, ipfileterMode
 }
 
 func IPListToTxt(FilterListFile []string) {
@@ -131,34 +169,42 @@ func IPListToTxt(FilterListFile []string) {
 
 }
 
-func DomainListToTree(filename []string) *TrieNode {
+// DomainListToTree 读取文件中的域名并构建 Trie 树
+func DomainListToTree(filenames []string) *TrieNode {
 	counter := 0
-	var files string
-
 	trie := NewTrieNode()
 
-	// Insert domains into the trie
+	if len(filenames) == 0 {
+		return trie
+	}
 
-	for _, file := range filename {
-		files = files + "/" + file
-
-		File, err := os.Open(file)
+	for _, file := range filenames {
+		// 打开文件
+		fileHandle, err := os.Open(file)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Printf("Error opening file %s: %v\n", file, err)
+			continue
 		}
+		defer fileHandle.Close() // 确保文件句柄被正确关闭
 
-		scanner := bufio.NewScanner(File)
+		// 扫描文件内容
+		scanner := bufio.NewScanner(fileHandle)
 		for scanner.Scan() {
-			if scanner.Text() == "" {
-				continue
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue // 跳过空行
 			}
-			trie.Insert(scanner.Text())
+			trie.Insert(line)
 			counter++
 		}
 
-		File.Close()
+		// 检查扫描错误
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("Error reading file %s: %v\n", file, err)
+		}
 	}
-	fmt.Printf("%s read %d domain rules\n", files, counter)
+
+	fmt.Printf("Read %d domain rules from files: %s\n", counter, strings.Join(filenames, ", "))
 
 	return trie
 }
@@ -216,7 +262,7 @@ func (t *TaskInfo) getTaskType() int {
 	const resolveIP = 20
 
 	//仅IP
-	if len(t.FilterDomainRuler) == 0 && (len(t.FilterIpRuler) != 0 || len(t.FilterIpV6Ruler) != 0) {
+	if len(t.FilterDomainRuler) == 0 && len(t.FilterIpRuler) != 0 {
 		if t.IsMatchResolveIP {
 			return resolveIP
 		} else {
@@ -295,18 +341,8 @@ func newTasks() *Tasks {
 		task.SuccessRateStatistics = make(map[string]int)
 		task.outPreFileName = make(map[int]*fileInfo)
 
-		if len(task.FilterIpRuler) != 0 {
-			task.IpFilterRuler = IPListToCache(task.FilterIpRuler)
-		}
-
-		if len(task.FilterIpV6Ruler) != 0 {
-			task.IpFilterV6Ruler = V6ListToTree(task.FilterIpV6Ruler)
-		}
-
-		if len(task.FilterDomainRuler) != 0 {
-			task.DomainFilterRuler = DomainListToTree(task.FilterDomainRuler)
-		}
-
+		task.taskMatchRule = NewMatchRule(task.FilterIpRuler, task.FilterDomainRuler)
+		
 		if task.FileMaxSizeString != "" {
 			unit := task.FileMaxSizeString[len(task.FileMaxSizeString)-1:]
 			value, _ := strconv.Atoi(task.FileMaxSizeString[:len(task.FileMaxSizeString)-1])
@@ -333,8 +369,6 @@ func newTasks() *Tasks {
 		}
 
 		tasks.TaskInfos[taskName] = task
-		fmt.Println(task.FilterTag)
-		fmt.Println(task.IpFilterV6Ruler)
 
 	}
 

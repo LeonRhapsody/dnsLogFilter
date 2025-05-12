@@ -8,6 +8,20 @@ import (
 func Run() {
 	tasks := newTasks()
 
+	//检查规则文件的时间
+	//go func() {
+	//	//
+	//
+	//	for range time.Tick(1 * time.Second) {
+	//
+	//		for _, task := range tasks.TaskInfos {
+	//			task.taskMatchRule.RefreshIPList()
+	//		}
+	//		//printDetailedStats()
+	//	}
+	//
+	//}()
+
 	fmt.Printf(
 		"================运行信息============================\n"+
 			"网卡名称：%s\n"+

@@ -13,7 +13,6 @@ task_infos:
     enable: true
     filter_ip_ruler:
       - "ip.list"
-    filter_ipv6_ruler:
       - "./v6.list"
     filter_domain_ruler:
     is_match_resolve_ip: true
@@ -27,7 +26,6 @@ task_infos:
   aliyun:
     enable: true
     filter_ip_ruler:
-    filter_ipv6_ruler:
     filter_domain_ruler:
       -  "./aliyun.list"
     output_dir: "./data/aliyun"
@@ -41,7 +39,6 @@ task_infos:
   wuxi-AI:
     enable: true
     filter_ip_ruler:
-    filter_ipv6_ruler:
     filter_domain_ruler:
       -  "./wuxi-AI.list"
     output_dir: "./data/wuxi-AI"

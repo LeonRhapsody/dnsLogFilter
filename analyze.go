@@ -60,31 +60,78 @@ func (t *TaskInfo) outFormat(srcLogArr []string) string {
 
 }
 
-func (t *TaskInfo) domainMatch(domain string) bool {
-	return t.DomainFilterRuler.Search(domain)
+func (r *MatchRule) domainMatch(domain string) bool {
+	return r.domainTrie.Search(domain)
 }
 
-func (t *TaskInfo) requestIPMatch(ip string) bool {
+func (r *MatchRule) requestIPMatch(ip string) bool {
 
-	if strings.Contains(ip, ":") {
-		return t.IpFilterV6Ruler.V6Search(ip)
-	} else {
-		_, OK := t.IpFilterRuler.Load(ip)
+	switch r.ipFilterMode {
+	case 0:
+		return false
+	case 1:
+		_, OK := r.v4ListMap.Load(ip)
 		return OK
+	case 2:
+		return r.v6Trie.V6Search(ip)
+	case 3:
+		if !strings.Contains(ip, ":") {
+			_, OK := r.v4ListMap.Load(ip)
+			return OK
+		} else {
+			return r.v6Trie.V6Search(ip)
+
+		}
+	default:
+		return false
 	}
 
 }
 
-func (t *TaskInfo) resolveIPMatch(ips string) bool {
-	for _, ip := range strings.Split(ips, ";") {
-		_, OK := t.IpFilterRuler.Load(ip)
-		return OK
+func (r *MatchRule) resolveIPMatch(ips string) bool {
+	switch r.ipFilterMode {
+	case 0:
+		return false
+	case 1:
+		for _, ip := range strings.Split(ips, ";") {
+			_, OK := r.v4ListMap.Load(ip)
+			if OK {
+				return true
+			}
+		}
+	case 2:
+		for _, ip := range strings.Split(ips, ";") {
+
+			if r.v6Trie.V6Search(ip) {
+				return true
+			}
+		}
+	case 3:
+		if !strings.Contains(ips, ":") {
+			for _, ip := range strings.Split(ips, ";") {
+				_, OK := r.v4ListMap.Load(ip)
+				if OK {
+					return OK
+				}
+			}
+		} else {
+			for _, ip := range strings.Split(ips, ";") {
+
+				if r.v6Trie.V6Search(ip) {
+					return true
+				}
+			}
+
+		}
+	default:
+		return false
 	}
+
 	return false
 
 }
 
-func (t *TaskInfo) Match(IP string, domain string, result string) bool {
+func (r *MatchRule) Match(IP string, domain string, result string, mode int) bool {
 	//匹配规则：
 	//01 仅域名
 	//10 仅请求IP
@@ -93,17 +140,17 @@ func (t *TaskInfo) Match(IP string, domain string, result string) bool {
 	//11 请求IP+域名
 	//21 解析IP+域名
 
-	switch t.FilterTag {
+	switch mode {
 	case 01:
-		return t.domainMatch(domain)
+		return r.domainMatch(domain)
 	case 10:
-		return t.requestIPMatch(IP)
+		return r.requestIPMatch(IP)
 	case 20:
-		return t.resolveIPMatch(IP)
+		return r.resolveIPMatch(IP)
 	case 11:
-		return t.domainMatch(domain) && t.requestIPMatch(IP)
+		return r.domainMatch(domain) && r.requestIPMatch(IP)
 	case 21:
-		return t.domainMatch(domain) && t.resolveIPMatch(IP)
+		return r.domainMatch(domain) && r.resolveIPMatch(IP)
 	default:
 		return false
 	}
@@ -186,6 +233,7 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int) {
 	defer T.backupFile(srcFileName)
 	srcLogArr := make([]string, 12)
 	nums := 0
+
 	filterMatchCounter := T.filterCounterInitialize()
 
 	// 读取文件内容
@@ -215,7 +263,7 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int) {
 
 		for TaskName, task := range T.TaskInfos {
 
-			if task.Match(srcLogArr[T.RequestIPIndex], srcLogArr[T.DomainIndex], srcLogArr[T.ResultIndex]) {
+			if task.taskMatchRule.Match(srcLogArr[T.RequestIPIndex], srcLogArr[T.DomainIndex], srcLogArr[T.ResultIndex], task.FilterTag) {
 				filterMatchCounter[TaskName]++
 
 				//如果输出标记为full，不处理日志格式直接输出

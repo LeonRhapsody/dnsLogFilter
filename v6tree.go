@@ -92,7 +92,7 @@ func ipV6ListToTree(filename []string) *TrieNode {
 
 	trie := NewTrieNode()
 
-	// Insert domains into the trie
+	// Insert domains into the v6Trie
 
 	for _, file := range filename {
 		files = files + "/" + file

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/LeonRhapsody/DNSLogFilter/cmd"
 	_ "net/http/pprof" // pprof包的init方法会注册5个uri pattern方法到runtime包中
 	"os"
@@ -94,14 +95,16 @@ type TaskInfo struct {
 	IsMatchResolveIP bool `yaml:"is_match_resolve_ip"`
 
 	//客户端IP
-	FilterIpRuler   []string `yaml:"filter_ip_ruler"`
-	FilterIpV6Ruler []string `yaml:"filter_ipv6_ruler"`
+	FilterIpRuler []string `yaml:"filter_ip_ruler"`
+
+	//ip过滤模式 1-v4 2-v6 3-v4+v6
+	ipFilterMode int
 
 	//请求域名
 	FilterDomainRuler []string `yaml:"filter_domain_ruler"`
 
 	//客户端IP
-	IpFilterRuler sync.Map
+	IpFilterRuler *sync.Map
 
 	IpFilterV6Ruler *TrieNode
 
@@ -124,6 +127,7 @@ type TaskInfo struct {
 	FileMaxSizeString string `yaml:"file_max_size"`
 	FileMaxSize       int
 	FileMaxTime       time.Duration `yaml:"file_max_time"`
+	taskMatchRule     *MatchRule
 
 	extend
 }
@@ -146,20 +150,26 @@ type extend struct {
 	Path      string
 }
 
-func main() {
+func printDetailedStats() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
 
-	//IPListToTxt([]string{"./v4.list"})
-	//os.Exit(1)
-	//
-	//tree := V6ListToTree([]string{"./v6.list"})
-	//fmt.Println(tree.V6Search("2409:8720:0C01:2B"))
-	//fmt.Println(tree.V6Search("2409:8720:0C01:2A"))
-	//fmt.Println(tree.V6Search("2409:8720:0C01:2A:"))
-	//fmt.Println(tree.V6Search("2409:8720:0C01:2A::"))
-	//fmt.Println(tree.V6Search("2409:8720:0C01:2A::1"))
-	//fmt.Println(tree.V6Search("2409:8720:0C01:2A:1234::1"))
-	////
-	//os.Exit(1)
+	//fmt.Println("=== 系统运行时统计 ===")
+	// 内存相关
+	fmt.Printf("Alloc: %v MiB (当前分配的内存)\n", m.Alloc/1024/1024)
+	//fmt.Printf("HeapAlloc: %v MiB (堆上分配的内存)\n", m.HeapAlloc/1024/1024)
+	//fmt.Printf("HeapInuse: %v MiB (使用中的堆内存)\n", m.HeapInuse/1024/1024)
+	//fmt.Printf("HeapIdle: %v MiB (空闲的堆内存)\n", m.HeapIdle/1024/1024)
+	//fmt.Printf("Sys: %v MiB (从操作系统获取的总内存)\n", m.Sys/1024/1024)
+	//fmt.Printf("NumGC: %v (垃圾回收次数)\n", m.NumGC)
+
+	// CPU 和 goroutine 相关
+	//fmt.Printf("NumGoroutine: %v (当前 goroutine 数量)\n", runtime.NumGoroutine())
+	////fmt.Printf("NumCPU: %v (可用 CPU 核心数)\n", runtime.NumCPU())
+	//fmt.Println("====================")
+}
+
+func main() {
 
 	if runtime.GOOS == "darwin" {
 		os.RemoveAll("/Users/leon/Documents/02-code/go/src/github.com/LeonRhapsody/DNSLogFilter/data")
@@ -172,4 +182,5 @@ func main() {
 
 	//go http.ListenAndServe("127.0.0.1:8080", nil)
 	Run()
+
 }

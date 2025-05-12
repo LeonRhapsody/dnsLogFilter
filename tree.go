@@ -13,7 +13,7 @@ const (
 	notMatch byte = 0
 )
 
-// TrieNode represents a node in the trie
+// TrieNode represents a node in the v6Trie
 type TrieNode struct {
 	children  map[string]*TrieNode
 	isEnd     bool // isEnd marks the end of a domain
@@ -25,8 +25,8 @@ func NewTrieNode() *TrieNode {
 	return &TrieNode{children: make(map[string]*TrieNode)}
 }
 
-// Insert inserts a domain into the trie
-// Insert inserts a domain into the trie
+// Insert inserts a domain into the v6Trie
+// Insert inserts a domain into the v6Trie
 func (t *TrieNode) Insert(domain string) {
 	parts := splitDomain(domain)
 	node := t
@@ -62,7 +62,7 @@ func printNode(node *TrieNode) {
 	}
 }
 
-// Search searches for a domain in the trie
+// Search searches for a domain in the v6Trie
 func (t *TrieNode) Search(domain string) bool {
 	//todo: search时，node.isEND代表的是上一级的结果，当前层级的isEND应该在下一级展示,暂未研究是否可以优化insert
 
@@ -96,7 +96,7 @@ func (t *TrieNode) Search(domain string) bool {
 	return false
 }
 
-// V6Search searches for a domain in the trie
+// V6Search searches for a domain in the v6Trie
 func (t *TrieNode) V6Search(domain string) bool {
 	//todo: search时，node.isEND代表的是上一级的结果，当前层级的isEND应该在下一级展示,暂未研究是否可以优化insert
 
@@ -165,38 +165,45 @@ func splitDomain(domain string) []string {
 	return parts
 }
 
-func V6ListToTree(filename []string) *TrieNode {
+// V6ListToTree 读取文件中的 IPv6 地址并构建 Trie 树
+func V6ListToTree(filenames []string) *TrieNode {
 	counter := 0
-	var files string
-
 	trie := NewTrieNode()
 
-	// Insert domains into the trie
+	if len(filenames) == 0 {
+		return trie
+	}
 
-	for _, file := range filename {
-		files = files + "/" + file
-
-		File, err := os.Open(file)
+	for _, file := range filenames {
+		// 打开文件
+		fileHandle, err := os.Open(file)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Printf("Error opening file %s: %v\n", file, err)
+			continue
 		}
+		defer fileHandle.Close() // 确保文件句柄被正确关闭
 
-		scanner := bufio.NewScanner(File)
+		// 扫描文件内容
+		scanner := bufio.NewScanner(fileHandle)
 		for scanner.Scan() {
-			if scanner.Text() == "" {
-				continue
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue // 跳过空行
 			}
-			trie.v6Insert(scanner.Text())
+			trie.v6Insert(line)
 			counter++
 		}
 
-		File.Close()
+		// 检查扫描错误
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("Error reading file %s: %v\n", file, err)
+		}
 	}
-	fmt.Printf("%s read %d v6 rules\n", files, counter)
+
+	fmt.Printf("Read %d IPv6 rules from files: %s\n", counter, strings.Join(filenames, ", "))
 
 	return trie
 }
-
 func treeTest() {
 	tree := NewTrieNode()
 
