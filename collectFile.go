@@ -33,6 +33,31 @@ func (T *Tasks) watchSingleDir() {
 		panic(fmt.Errorf(T.InputDir, "is not exist or ", err))
 	}
 
+	//离线文件分析
+	err = filepath.WalkDir(T.InputDir, func(root string, d fs.DirEntry, err error) error {
+		if err != nil {
+			log.Fatal(err) // 可能会有访问权限等错误
+			return nil
+		}
+
+		if d.IsDir() {
+			return nil // 跳过目录
+		}
+
+		if strings.HasSuffix(d.Name(), T.LogType) {
+			Info, _ := d.Info()
+			if time.Now().Sub(Info.ModTime()).Hours() <= 2 {
+				log.Println("[New] New file (old) found:", path.Join(root))
+				T.NewFilePath <- path.Join(root)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		log.Println(err)
+	}
+
 	done := make(chan bool)
 	go func() {
 		for {
@@ -40,10 +65,10 @@ func (T *Tasks) watchSingleDir() {
 			case event := <-watcher.Events:
 				if event.Op&fsnotify.Create == fsnotify.Create {
 
-					if strings.HasSuffix(event.Name, ".gz") {
+					if strings.HasSuffix(event.Name, T.LogType) {
 
 						log.Println("[New] New file found:", event.Name)
-						T.FoundFilePath <- event.Name
+						T.NewFilePath <- event.Name
 
 					}
 
@@ -117,11 +142,11 @@ func (T *Tasks) watchMultipleDir() {
 			case event := <-watcher.Events:
 				if event.Op&fsnotify.Create == fsnotify.Create {
 
-					if strings.HasSuffix(event.Name, ".gz") {
+					if strings.HasSuffix(event.Name, T.LogType) {
 
 						fileInfo, err := os.Stat(event.Name)
 						if err != nil {
-							log.Fatal("无法获取文件或目录信息:", err)
+							log.Println("无法获取文件或目录信息:", err)
 						}
 
 						//只监听今日目录，同时remove3天前的目录清单
@@ -147,10 +172,10 @@ func (T *Tasks) watchMultipleDir() {
 						} else {
 							if !strings.HasSuffix(event.Name, ".CHK") && !strings.HasSuffix(event.Name, ".AUDIT") {
 								log.Println("New file found:", event.Name)
-								T.FoundFilePath <- event.Name
+								T.NewFilePath <- event.Name
 							}
 							log.Println("[New] New file found:", event.Name)
-							T.FoundFilePath <- event.Name
+							T.NewFilePath <- event.Name
 							//}
 
 						}
@@ -178,7 +203,9 @@ func (T *Tasks) offlineWatch() {
 			return nil // 跳过目录
 		}
 
-		T.FoundFilePath <- path.Join(root)
+		if strings.HasSuffix(d.Name(), T.LogType) {
+			T.NewFilePath <- path.Join(root)
+		}
 
 		return nil
 	})
@@ -192,11 +219,58 @@ func (T *Tasks) offlineWatch() {
 		for {
 			select {
 			case <-timer.C:
-				T.FoundFilePath <- "done"
+				T.NewFilePath <- "done"
 			}
 
 		}
 
 	}()
 	T.wg.Wait()
+}
+
+func (T *Tasks) recoverLatestTempFile() {
+
+	// 收集所有匹配的 .gz.tmp 文件
+	for _, task := range T.TaskInfos {
+		var tempFiles []string
+
+		log.Printf("Scanning for latest .gz.tmp file in %s ", task.OutputDir)
+		err := filepath.WalkDir(task.OutputDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				log.Printf("Error accessing path %s: %v", path, err)
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if strings.HasSuffix(d.Name(), ".gz.tmp") {
+
+				tempFiles = append(tempFiles, path)
+			}
+			return nil
+		})
+		if err != nil {
+			log.Printf("Error scanning directory %s: %v", task.OutputDir, err)
+			return
+		}
+		// 重命名并上传最新文件
+		for _, file := range tempFiles {
+			gzFile := strings.TrimSuffix(file, ".tmp")
+			log.Printf("[Recover] Renaming latest temp file %s to %s", file, gzFile)
+			if err := os.Rename(file, gzFile); err != nil {
+				log.Fatalf("Error renaming file %s: %v", file, err)
+			}
+			if task.Upload.IsUpload {
+				err = task.uploadFile(gzFile)
+				if err != nil {
+					log.Printf("[Error Upload] failed: %v", err)
+				} else {
+					log.Printf("[Upload] %s to sftp %s successfully", gzFile, task.Upload.SFTPHost)
+					T.deleteFile(gzFile)
+				}
+			}
+		}
+
+	}
+
 }

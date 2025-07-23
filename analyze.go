@@ -9,7 +9,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -215,22 +215,27 @@ func (T *Tasks) readFile(fileName string) ([]byte, error) {
 	return os.ReadFile(fileName)
 }
 
-// 更新域名计数的函数
-func (T *Tasks) updateDomainCounter(domain string) {
-	if T.DomainCounterEnable {
-		primaryDomain := getMainDomain(domain)
-		//primaryDomain := domain
-		val, ok := T.domainCounter.Load(primaryDomain)
-		if !ok {
-			T.domainCounter.Store(primaryDomain, 1)
-		} else {
-			T.domainCounter.Store(primaryDomain, val.(int)+1)
-		}
-	}
-}
-
 func (T *Tasks) Filter(srcFileName string, taskId int, fileId int) {
-	defer T.backupFile(srcFileName)
+
+	if T.IsDelete {
+		defer T.deleteFile(srcFileName)
+	} else {
+		defer T.backupFile(srcFileName)
+	}
+
+	for _, task := range T.TaskInfos {
+		//确认写意图，确保写的线程优先级更高，能够及时拿到锁
+		for {
+			if atomic.LoadInt32(&task.writeFlag) == 1 {
+				time.Sleep(10 * time.Millisecond)
+			} else {
+				break
+			}
+		}
+		task.writeLock.RLock()
+		defer task.writeLock.RUnlock()
+	}
+
 	srcLogArr := make([]string, 12)
 	nums := 0
 
@@ -254,12 +259,16 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int) {
 		copy(srcLogArr, strings.Split(scanner.Text(), "|"))
 
 		//剔除异常日志
-		if len(srcLogArr) < 7 {
+		if len(srcLogArr) < 7 || srcLogArr[0] == "q" {
 			continue
 		}
 
 		//统计每日主域名和访问数量
-		T.updateDomainCounter(srcLogArr[T.DomainIndex])
+		if T.CountDomainMode {
+			if srcLogArr[T.RequestTypeIndex] == "65" {
+				T.DomainCounter.domainIncrement(srcLogArr[T.DomainIndex])
+			}
+		}
 
 		for TaskName, task := range T.TaskInfos {
 
@@ -267,11 +276,15 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int) {
 				filterMatchCounter[TaskName]++
 
 				//如果输出标记为full，不处理日志格式直接输出
-				if task.OutputFormatString == "full" {
+				switch task.OutputFormatString {
+				case "full":
 					T.TempResultMap[TaskName+strconv.Itoa(taskId)].WriteString(scanner.Text() + "\n")
-				} else {
+
+				default:
 					T.TempResultMap[TaskName+strconv.Itoa(taskId)].WriteString(task.outFormat(srcLogArr))
+
 				}
+
 			}
 
 		}
@@ -279,7 +292,7 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int) {
 	}
 
 	if err = scanner.Err(); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	for TaskName, task := range T.TaskInfos {
@@ -312,6 +325,16 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int) {
 				gzFile := strings.TrimSuffix(task.outPreFileName[taskId].fileName, ".tmp")
 				log.Printf("[Rename File] %s to %s\n", task.outPreFileName[taskId].fileName, gzFile)
 				os.Rename(task.outPreFileName[taskId].fileName, gzFile)
+				if task.Upload.IsUpload {
+					err = task.uploadFile(gzFile)
+					if err != nil {
+						log.Println("[Error Upload] failed: %v", err)
+					} else {
+						log.Printf("[Upload] %s to sftp %s successfully\n", gzFile, task.Upload.SFTPHost)
+						T.deleteFile(gzFile)
+
+					}
+				}
 				task.outPreFileName[taskId].fileName = path.Join(task.OutputDir, fmt.Sprintf("%s_%s_%s_%d.gz.tmp", "250", T.hostIP, time.Now().Format("20060102150405"), taskId))
 				task.outPreFileName[taskId].CreateTime = time.Now()
 			}
@@ -340,20 +363,13 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int) {
 
 	log.Printf("[Analyze] [taskId threads: %d ,nums: %d] [filename: %s]-[record: %d], [end %s,During: %s, Qps: %d], [%s] \n", taskId, fileId, srcFileName, nums, time.Now().Format("2006-01-02 15:04:05"), times.String(), qps, matchInfo)
 
-	//统计每日主域名和访问数量
-	if T.DomainCounterEnable && time.Now().Hour() >= T.ExecutedHour && start.Day() != (T.lastExecutedDay).Day() {
-		go sortByValueAndSaveMap(T.domainCounter, fmt.Sprintf("domain_%d.txt", time.Now().Day()))
-		T.domainCounter = sync.Map{}
-		*(T.lastExecutedDay) = time.Now()
-	}
 }
 
 func (T *Tasks) execTransfer() {
-
+	// 为每个任务和线程初始化缓冲区
 	for i := 0; i < T.AnalyzeThreads; i++ {
-
-		for taskName, _ := range T.TaskInfos {
-			T.TempResultMap[taskName+strconv.Itoa(i)] = new(bytes.Buffer) // 或者 &bytes.Buffer{}
+		for taskName := range T.TaskInfos {
+			T.TempResultMap[taskName+strconv.Itoa(i)] = new(bytes.Buffer)
 		}
 
 		T.wg.Add(1)
@@ -364,12 +380,13 @@ func (T *Tasks) execTransfer() {
 			var fileID int
 
 			// 设置定时器，每0.2秒检查一次文件修改时间
-			timer := time.NewTicker(200 * time.Millisecond)
+			timer := time.NewTicker(100 * time.Millisecond)
 			defer timer.Stop()
+
 			for {
 
 				select {
-				case fileName := <-T.FoundFilePath:
+				case fileName := <-T.NewFilePath:
 					fileID++
 					if fileName == "done" {
 						log.Printf("thread %d recive done,quit \n", id)
@@ -388,7 +405,7 @@ func (T *Tasks) execTransfer() {
 							modTime := fileInfo.ModTime()
 
 							// 检查文件修改时间是否变化
-							if time.Since(modTime) > 1*time.Second {
+							if time.Since(modTime) > 200*time.Millisecond {
 								log.Println("[New] File write completed,start transfer: ", fileName)
 
 								T.Filter(fileName, id, fileID)
@@ -403,5 +420,64 @@ func (T *Tasks) execTransfer() {
 			}
 		}(i)
 	}
-
 }
+
+//
+//func (T *Tasks) execTransfer() {
+//
+//	for i := 0; i < T.AnalyzeThreads; i++ {
+//
+//		for taskName, _ := range T.TaskInfos {
+//			T.TempResultMap[taskName+strconv.Itoa(i)] = new(bytes.Buffer) // 或者 &bytes.Buffer{}
+//		}
+//
+//		T.wg.Add(1)
+//		go func(id int) {
+//			defer T.wg.Done()
+//
+//			log.Printf("初始化分析【%d】线程\n", id)
+//			var fileID int
+//
+//			// 设置定时器，每0.2秒检查一次文件修改时间
+//			timer := time.NewTicker(100 * time.Millisecond)
+//			defer timer.Stop()
+//
+//			for {
+//
+//				select {
+//				case fileName := <-T.NewFilePath:
+//					fileID++
+//					if fileName == "done" {
+//						log.Printf("thread %d recive done,quit \n", id)
+//						return
+//					}
+//				outer:
+//					for {
+//						select {
+//						case <-timer.C:
+//							// 获取文件信息
+//							fileInfo, err := os.Stat(fileName)
+//							if err != nil {
+//								fmt.Println("Error:", err)
+//								return
+//							}
+//							modTime := fileInfo.ModTime()
+//
+//							// 检查文件修改时间是否变化
+//							if time.Since(modTime) > 1*time.Second {
+//								log.Println("[New] File write completed,start transfer: ", fileName)
+//
+//								T.Filter(fileName, id, fileID)
+//
+//								break outer
+//							}
+//						}
+//
+//					}
+//
+//				}
+//			}
+//		}(i)
+//	}
+//
+//}

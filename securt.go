@@ -13,7 +13,8 @@ import (
 
 var (
 	inputString string
-	keyFlag     = []byte("0123456789abcdefghijklmnopqrstuv")
+	//keyFlag     = []byte("0123456789abcdefghijklmnopqrstuv")
+	keyFlag = []byte("t7m3n5w5k6f8z1w7l0v5q2k0f6f1o8i5")
 )
 
 func init() {
@@ -74,6 +75,7 @@ func encString(input string) string {
 
 // decString 解密输入字符串
 func decString(input string) string {
+
 	// 确保密钥长度为 32 字节
 	key := []byte(keyFlag)
 	if len(key) != 32 {

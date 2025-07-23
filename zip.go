@@ -189,11 +189,30 @@ func (T *Tasks) backupFile(sourcePath string) error {
 	err := os.Rename(sourcePath, destinationPath)
 	if err != nil {
 		// 如果发生错误，打印错误并退出
-		log.Fatal("Error moving file:", err)
-		return err
+		log.Printf("Error moving file: %v", err.Error())
+		//return err
 	}
 	log.Printf("[Backup] %s to %s\n", sourcePath, destinationPath)
 
+	return nil
+}
+
+func (T *Tasks) deleteFile(filePath string) error {
+	// 检查文件路径是否为空
+	if filePath == "" {
+		return nil
+	}
+
+	// 使用 os.Remove 函数删除文件
+	err := os.Remove(filePath)
+	if err != nil {
+		// 如果发生错误，记录错误并返回
+		log.Printf("Error deleting file: %v", err.Error())
+		return err
+	}
+
+	// 记录删除操作
+	log.Printf("[Delete] %s\n", filePath)
 	return nil
 }
 

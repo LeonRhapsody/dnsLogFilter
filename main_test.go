@@ -19,7 +19,7 @@ func TestDomainListToTree(t *testing.T) {
 	}
 }
 
-func main() {
+func main_test() {
 	tree := NewTrieNode()
 
 	tree.Insert("www.baidu.com")

@@ -1,20 +1,55 @@
 eth_name: "en0"
-analyze_threads: 1
+analyze_threads: 5
 input_dir: "./input"
 input_format: "r,12,3,4,1,2,5,6,7,14,19,15,13"
 backup_dir: "./backup"
+is_delete: false
 online_mode: true
-domain_counter_enable: false
-executed_hour: 10
-
+log_type: "gz"
+#原文：Alipms@123
+count_domain_mode: false
+count_domain_cron: "* * * * *"
 
 task_infos:
+  fanzha:
+    enable: true
+    filter_ip_ruler:
+    filter_domain_ruler:
+      - "force.list"
+    is_match_resolve_ip: false
+    output_dir: "./data/fanzha"
+    output_format: "jituan"
+    is_gzip: true
+    ump_mysql_host: "host.09l6.com"
+    ump_mysql_port: 3306
+    ump_mysql_user: "root"
+    ump_mysql_pass: "MyT6J+ie+ZKWAr2NSwh8TTM1cmEJ9RqENN/atQntU7R0JOjyXKA="
+    db_name: "IMPANEL_CACH"
+    force_domain_update: 1m
+    force_domain_mode: true
+    force_domain_list: "force.list"
+    force_domain_sql: "select domain from IMPANEL_CACH.DNS_CACHE_FORCE t where t.servicetypeid = 0 limit 10"
+    file_max_size: 200M
+    file_max_time: 1m
+    upload:
+      is_upload: true
+      sftp_host: "127.0.0.1"
+      sftp_port: 2022
+      sftp_user: "alipms"
+      sftp_pass: "6jPf/m2NVdn/Zk6SrLLKqfrisvKvi+yU2ZAj7yebUi14RdP+yeY="
+      sftp_path: "./"
+      max_retries: 3
+      retry_delay: 5s
+      rate_limit_kbps: 999999
+      timeout: 30s
+
   apt:
     enable: true
     filter_ip_ruler:
       - "ip.list"
       - "./v6.list"
     filter_domain_ruler:
+      - "force2.list"
     is_match_resolve_ip: true
     output_dir: "./data/apt"
     output_format: "jituan"
@@ -22,6 +57,39 @@ task_infos:
     is_gzip: true
     file_max_size: 200M
     file_max_time: 1h
+    ump_mysql_host: "host.09l6.com"
+    ump_mysql_port: 3306
+    ump_mysql_user: "root"
+    ump_mysql_pass: "MyT6J+ie+ZKWAr2NSwh8TTM1cmEJ9RqENN/atQntU7R0JOjyXKA="
+    db_name: "IMPANEL_CACH"
+    force_domain_update: 1m
+    force_domain_mode: true
+    force_domain_list: "force2.list"
+    force_domain_sql: "select domain from IMPANEL_CACH.DNS_CACHE_FORCE t where t.servicetypeid = 0 limit 10"
+
+  apt2:
+    enable: true
+    filter_ip_ruler:
+      - "ip.list"
+      - "./v6.list"
+    filter_domain_ruler:
+      - "force3.list"
+    is_match_resolve_ip: true
+    output_dir: "./data/apt2"
+    output_format: "jituan"
+    is_upload: true
+    is_gzip: true
+    file_max_size: 200M
+    file_max_time: 1h
+    ump_mysql_host: "host.09l6.com"
+    ump_mysql_port: 3306
+    ump_mysql_user: "root"
+    ump_mysql_pass: "MyT6J+ie+ZKWAr2NSwh8TTM1cmEJ9RqENN/atQntU7R0JOjyXKA="
+    db_name: "IMPANEL_CACH"
+    force_domain_update: 1m
+    force_domain_mode: true
+    force_domain_list: "force3.list"
+    force_domain_sql: "select domain from IMPANEL_CACH.DNS_CACHE_FORCE t where t.servicetypeid = 0 limit 10"
 
   aliyun:
     enable: true

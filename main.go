@@ -2,11 +2,7 @@ package main
 
 import (
 	"bytes"
-	"fmt"
-	"github.com/LeonRhapsody/DNSLogFilter/cmd"
 	_ "net/http/pprof" // pprof包的init方法会注册5个uri pattern方法到runtime包中
-	"os"
-	"runtime"
 	"sync"
 	"time"
 )
@@ -14,12 +10,6 @@ import (
 const (
 	valid   = true
 	invalid = false
-)
-
-var (
-	Commit    string
-	GitLog    string
-	BuildTime string
 )
 
 // 输出文件信息，用于判断截断条件
@@ -37,11 +27,12 @@ type RunStatus struct {
 
 // logIndex 日志字段索引
 type logIndex struct {
-	RequestIPIndex int //请求IP
-	DNSServerIndex int //DNS IP
-	RCodeIndex     int //响应编码
-	DomainIndex    int //请求域名
-	ResultIndex    int //响应结果
+	RequestIPIndex   int //请求IP
+	DNSServerIndex   int //DNS IP
+	RequestTypeIndex int
+	RCodeIndex       int //响应编码
+	DomainIndex      int //请求域名
+	ResultIndex      int //响应结果
 
 }
 
@@ -49,12 +40,16 @@ type Tasks struct {
 	EthName string `yaml:"eth_name"`
 	hostIP  string
 
+	LogType string `yaml:"log_type"`
+
 	AnalyzeThreads int `yaml:"analyze_threads"`
-	FoundFilePath  chan string
-	InputDir       string `yaml:"input_dir"`
+	NewFilePath    chan string
+
+	InputDir string `yaml:"input_dir"`
 
 	InputFormat string               `yaml:"input_format"`
 	BackupDir   string               `yaml:"backup_dir"`
+	IsDelete    bool                 `yaml:"is_delete"`
 	TaskInfos   map[string]*TaskInfo `yaml:"task_infos"`
 
 	OnlineMode bool `yaml:"online_mode"`
@@ -70,18 +65,21 @@ type Tasks struct {
 	logIndex
 	RunStatus
 
-	//primaryDomainStatistics
-	domainCounter       sync.Map
-	DomainCounterEnable bool `yaml:"domain_counter_enable"`
-	ExecutedHour        int  `yaml:"executed_hour"` //执行输出域名清单的时间
-	lastExecutedDay     *time.Time
+	CountDomainMode bool   `yaml:"count_domain_mode"`
+	CountDomainCron string `yaml:"count_domain_cron"`
+	DomainCounter   *DomainCounter
+}
 
-	//客户端IP
-
-	//大一统规则池
-	mapCache sync.Map
-	//大一统规则池
-	treeCache *TrieNode
+// DomainCounter 管理跨线程的域计数
+type DomainCounter struct {
+	counts     chan string    // 通道用于传递域名
+	countsFile string         // 计数存储的文件路径
+	merged     map[string]int // 共享 map 用于存储计数
+	flushReq   chan struct{}  // 信号通道，通知收集器暂停
+	flushDone  chan struct{}  // 信号通道，通知收集器暂停完成
+	flushing   bool           // 标记是否正在执行 write
+	cond       *sync.Cond     // 条件变量，同步写进程和收集器
+	mu         sync.Mutex     // 保护 merged map
 }
 
 type TaskInfo struct {
@@ -129,58 +127,44 @@ type TaskInfo struct {
 	FileMaxTime       time.Duration `yaml:"file_max_time"`
 	taskMatchRule     *MatchRule
 
-	extend
+	Upload uploadInfo `yaml:"upload"`
+
+	UmpMysqlHost      string        `yaml:"ump_mysql_host"`
+	UmpMysqlPort      int           `yaml:"ump_mysql_port"`
+	UmpMysqlUser      string        `yaml:"ump_mysql_user"`
+	UmpMysqlPass      string        `yaml:"ump_mysql_pass"`
+	DbName            string        `yaml:"db_name"`
+	ForceDomainSql    string        `yaml:"force_domain_sql"`
+	ForceDomainMode   bool          `yaml:"force_domain_mode"`
+	ForceDomainList   string        `yaml:"force_domain_list"`
+	ForceDomainUpdate time.Duration `yaml:"force_domain_update"`
+
+	//写意图声明,用于数据库更新锁
+	writeFlag int32 // 0: no writer, 1: writer wants lock)
+	writeLock sync.RWMutex
 }
 
-type extend struct {
-	CityCIDRs             map[string]string
-	SuccessRateStatistics map[string]int
-	TotalRateStatistics   map[string]int
-	//文件生成间隔
-	Interval time.Duration `yaml:"interval"`
-
-	IsUpload   bool `yaml:"is_upload"`
-	UploadFile chan string
-
-	uploadMod string // sftp;ftp
-	Host      string
-	Port      string
-	User      string
-	Pass      string
-	Path      string
-}
-
-func printDetailedStats() {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-
-	//fmt.Println("=== 系统运行时统计 ===")
-	// 内存相关
-	fmt.Printf("Alloc: %v MiB (当前分配的内存)\n", m.Alloc/1024/1024)
-	//fmt.Printf("HeapAlloc: %v MiB (堆上分配的内存)\n", m.HeapAlloc/1024/1024)
-	//fmt.Printf("HeapInuse: %v MiB (使用中的堆内存)\n", m.HeapInuse/1024/1024)
-	//fmt.Printf("HeapIdle: %v MiB (空闲的堆内存)\n", m.HeapIdle/1024/1024)
-	//fmt.Printf("Sys: %v MiB (从操作系统获取的总内存)\n", m.Sys/1024/1024)
-	//fmt.Printf("NumGC: %v (垃圾回收次数)\n", m.NumGC)
-
-	// CPU 和 goroutine 相关
-	//fmt.Printf("NumGoroutine: %v (当前 goroutine 数量)\n", runtime.NumGoroutine())
-	////fmt.Printf("NumCPU: %v (可用 CPU 核心数)\n", runtime.NumCPU())
-	//fmt.Println("====================")
+type uploadInfo struct {
+	sftpUploadManager *UploadManager
+	IsUpload          bool          `yaml:"is_upload"`
+	SFTPHost          string        `yaml:"sftp_host"`
+	SFTPPort          int           `yaml:"sftp_port"`
+	SFTPUser          string        `yaml:"sftp_user"`
+	SFTPPass          string        `yaml:"sftp_pass"`
+	SFTPPath          string        `yaml:"sftp_path"`
+	MaxRetries        int           `yaml:"max_retries"`
+	RetryDelay        time.Duration `yaml:"retry_delay"`
+	RateLimitKBps     int           `yaml:"rate_limit_kbps"`
+	Timeout           time.Duration `yaml:"timeout"`
 }
 
 func main() {
 
-	if runtime.GOOS == "darwin" {
-		os.RemoveAll("/Users/leon/Documents/02-code/go/src/github.com/LeonRhapsody/DNSLogFilter/data")
-	}
+	//if runtime.GOOS == "darwin" {
+	//	os.RemoveAll("/Users/leon/Documents/02-code/go/src/github.com/LeonRhapsody/DNSLogFilter/data")
+	//}
 
-	cmd.Commit = Commit
-	cmd.GitLog = GitLog
-	cmd.BuildTime = BuildTime
-	cmd.Execute()
-
+	Execute()
 	//go http.ListenAndServe("127.0.0.1:8080", nil)
-	Run()
 
 }

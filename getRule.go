@@ -2,10 +2,14 @@ package main
 
 import (
 	"bufio"
+	"database/sql"
 	"fmt"
+	_ "github.com/go-sql-driver/mysql"
+	"log"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,6 +23,53 @@ type MatchRule struct {
 	domainRulerFiles []string  // IP 清单文件列表
 	ipFilterMode     int       // 模式标志
 	fileModTimeMap   map[string]time.Time
+}
+
+// 查询并写入 domain 的函数
+func (t *TaskInfo) queryAndWriteDomains(filename string) {
+
+	start := time.Now()
+	// 构造 DSN
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True", t.UmpMysqlUser, decString(t.UmpMysqlPass), t.UmpMysqlHost, t.UmpMysqlPort, t.DbName)
+
+	// 连接数据库
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Printf("数据库连接失败: %v\n", err)
+		return
+	}
+	defer db.Close()
+
+	// 执行查询
+	rows, err := db.Query(t.ForceDomainSql)
+	if err != nil {
+		log.Printf("查询失败: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	// 创建或覆盖文件
+	file, err := os.Create(filename)
+	if err != nil {
+		log.Printf("创建文件失败: %v\n", err)
+		return
+	}
+	defer file.Close()
+
+	// 创建带缓冲的 Writer（默认缓冲区 4KB，可以自定义如 bufio.NewWriterSize(file, 64*1024)）
+	writer := bufio.NewWriterSize(file, 64*1024)
+	defer writer.Flush()
+
+	// 遍历结果写入文件
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			log.Printf("读取字段失败: %v\n", err)
+			continue
+		}
+		writer.WriteString(domain + "\n")
+	}
+	log.Printf("[query database] 读取数据库完成(%v)，domain 列表已写入 %s\n", time.Since(start), filename)
 }
 
 func (r *MatchRule) checkFileModTime() bool {
@@ -44,22 +95,26 @@ func (r *MatchRule) checkFileModTime() bool {
 }
 
 // NewMatchRule 初始化 IPListCache
-func NewMatchRule(ipListFiles []string, domainListFiles []string) *MatchRule {
-	cache := &MatchRule{
+func (t *TaskInfo) NewMatchRule(ipListFiles []string, domainListFiles []string) {
+	t.taskMatchRule = &MatchRule{
 		v4ListMap:        &sync.Map{},
 		v6Trie:           NewTrieNode(),
 		domainTrie:       NewTrieNode(),
 		ipRulerFiles:     ipListFiles,
 		domainRulerFiles: domainListFiles,
 	}
-	cache.RefreshIPList() // 初次加载
-	return cache
+	t.RefreshIPList() // 初次加载
 }
 
 // RefreshIPList 刷新 IP 清单
-func (r *MatchRule) RefreshIPList() {
-	r.Lock()         // 写锁，确保刷新时独占
-	defer r.Unlock() // 确保解锁
+func (t *TaskInfo) RefreshIPList() {
+
+	//申明写意图
+	atomic.StoreInt32(&t.writeFlag, 1)
+	defer atomic.StoreInt32(&t.writeFlag, 0)
+	//加锁
+	t.writeLock.Lock()
+	defer t.writeLock.Unlock()
 
 	var (
 		v4Counter     int
@@ -72,9 +127,9 @@ func (r *MatchRule) RefreshIPList() {
 	newV6Trie := NewTrieNode()
 	newDomainTrie := NewTrieNode()
 
-	if len(r.ipRulerFiles) != 0 {
+	if len(t.taskMatchRule.ipRulerFiles) != 0 {
 		// 遍历文件并加载 IP
-		for _, file := range r.ipRulerFiles {
+		for _, file := range t.taskMatchRule.ipRulerFiles {
 			fileHandle, err := os.Open(file)
 			if err != nil {
 				fmt.Printf("Error opening file %s: %v\n", file, err)
@@ -111,9 +166,9 @@ func (r *MatchRule) RefreshIPList() {
 		}
 	}
 
-	if len(r.domainRulerFiles) != 0 {
+	if len(t.taskMatchRule.domainRulerFiles) != 0 {
 
-		for _, file := range r.domainRulerFiles {
+		for _, file := range t.taskMatchRule.domainRulerFiles {
 			fileHandle, err := os.Open(file)
 			if err != nil {
 				fmt.Printf("Error opening file %s: %v\n", file, err)
@@ -136,21 +191,21 @@ func (r *MatchRule) RefreshIPList() {
 	}
 
 	// 更新缓存
-	r.v4ListMap = newV4ListMap
-	r.v6Trie = newV6Trie
-	r.domainTrie = newDomainTrie
-	fmt.Printf("Refreshed %d v4IP and %d v6IP rules from files: %s\n", v4Counter, v6Counter, strings.Join(r.ipRulerFiles, ", "))
-	fmt.Printf("Refreshed %d domain rules from files: %s\n", domainCounter, strings.Join(r.domainRulerFiles, ", "))
+	t.taskMatchRule.v4ListMap = newV4ListMap
+	t.taskMatchRule.v6Trie = newV6Trie
+	t.taskMatchRule.domainTrie = newDomainTrie
+	fmt.Printf("Refreshed %d v4IP and %d v6IP rules from files: %s\n", v4Counter, v6Counter, strings.Join(t.taskMatchRule.ipRulerFiles, ", "))
+	fmt.Printf("Refreshed %d domain rules from files: %s\n", domainCounter, strings.Join(t.taskMatchRule.domainRulerFiles, ", "))
 
 	// 设置 ipFilterMode
 	if v4Counter > 0 && v6Counter > 0 {
-		r.ipFilterMode = 3
+		t.taskMatchRule.ipFilterMode = 3
 	} else if v4Counter > 0 {
-		r.ipFilterMode = 2
+		t.taskMatchRule.ipFilterMode = 2
 	} else if v6Counter > 0 {
-		r.ipFilterMode = 1
+		t.taskMatchRule.ipFilterMode = 1
 	} else {
-		r.ipFilterMode = 0
+		t.taskMatchRule.ipFilterMode = 0
 	}
 
 }

@@ -2,25 +2,32 @@ package main
 
 import (
 	"fmt"
-	"github.com/LeonRhapsody/DNSLogFilter/manager"
+	"time"
 )
 
 func Run() {
 	tasks := newTasks()
 
-	//检查规则文件的时间
-	//go func() {
-	//	//
-	//
-	//	for range time.Tick(1 * time.Second) {
-	//
-	//		for _, task := range tasks.TaskInfos {
-	//			task.taskMatchRule.RefreshIPList()
-	//		}
-	//		//printDetailedStats()
-	//	}
-	//
-	//}()
+	if tasks.CountDomainMode {
+		go tasks.DomainCounter.collect()
+	}
+
+	for _, task := range tasks.TaskInfos {
+		if task.ForceDomainMode {
+			//检查规则文件的时间
+			go func() {
+
+				for range time.Tick(task.ForceDomainUpdate) {
+
+					task.queryAndWriteDomains(task.ForceDomainList)
+					task.RefreshIPList()
+
+					//printDetailedStats()
+				}
+
+			}()
+		}
+	}
 
 	fmt.Printf(
 		"================运行信息============================\n"+
@@ -58,19 +65,14 @@ func Run() {
 
 	fmt.Println("=====================================================")
 
-	if tasks.adminMode {
-		ginConfig := manager.NewRouter("127.0.0.1", "35695")
-		ginConfig.Router.GET("/status", tasks.getStatus)
-		//ginConfig.Router.PUT("/reload", tasks.reload)
-		ginConfig.AddRouter()
-		go ginConfig.Run()
-	}
-
 	go tasks.execTransfer()
 
 	if tasks.OnlineMode {
-		tasks.watchSingleDir()
+		tasks.recoverLatestTempFile()
+		go tasks.watchSingleDir()
+		select {}
 	} else {
 		tasks.offlineWatch()
 	}
+
 }

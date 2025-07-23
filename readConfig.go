@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 	"io"
 	"log"
@@ -297,12 +298,10 @@ func newTasks() *Tasks {
 
 	tasks.RunStatus.StartTime = time.Now().Format("2006-01-02 15:04:05")
 
-	tasks.FoundFilePath = make(chan string, 10)
+	tasks.NewFilePath = make(chan string, tasks.AnalyzeThreads*200)
 	tasks.hostIP = GetIPAddress(tasks.EthName)
 	tasks.TempResultMap = make(map[string]*bytes.Buffer)
 	tasks.RunStatus.TaskMatchDetails = make(map[string]int)
-
-	tasks.lastExecutedDay = new(time.Time)
 
 	for i, v := range strings.Split(tasks.InputFormat, ",") {
 		switch v {
@@ -310,6 +309,8 @@ func newTasks() *Tasks {
 			tasks.RequestIPIndex = i
 		case "3":
 			tasks.DNSServerIndex = i
+		case "7":
+			tasks.RequestTypeIndex = i
 		case "6":
 			tasks.DomainIndex = i
 		case "14":
@@ -319,6 +320,41 @@ func newTasks() *Tasks {
 		default:
 
 		}
+	}
+
+	//初始化rocksdb
+	if tasks.CountDomainMode {
+		//var err error
+		//tasks.DomainCounter, err = NewDomainCounter("./stats_db", tasks.AnalyzeThreads) // 使用绝对路径
+		//if err != nil {
+		//	log.Fatalf("Failed to initialize counter: %v", err)
+		//}
+
+		tasks.DomainCounter = &DomainCounter{
+			countsFile: "output.txt",
+			counts:     make(chan string, 10000),
+			cond:       sync.NewCond(&sync.Mutex{}),
+			merged:     make(map[string]int),
+			flushReq:   make(chan struct{}, 1),
+			flushDone:  make(chan struct{}),
+			flushing:   false,
+		}
+
+		// 创建调度器
+		c := cron.New()
+		_, err := c.AddFunc(tasks.CountDomainCron, func() {
+			log.Println("[Cron] Starting exec CronTask: FlushToFile")
+			if err := tasks.DomainCounter.write(); err != nil {
+				log.Printf("Failed to flush to file: %v", err)
+			}
+			log.Println("[Cron] Completed FlushToFile to ", tasks.DomainCounter.countsFile)
+		})
+		if err != nil {
+			log.Fatalf("Failed to schedule job: %v", err)
+		}
+		c.Start()
+		//defer c.Stop()
+
 	}
 
 	for taskName, task := range tasks.TaskInfos {
@@ -336,13 +372,16 @@ func newTasks() *Tasks {
 			task.OutputFormat = transferFormat(tasks.InputFormat, task.OutputFormatString)
 		}
 
-		task.CityCIDRs = make(map[string]string)
-		task.TotalRateStatistics = make(map[string]int)
-		task.SuccessRateStatistics = make(map[string]int)
 		task.outPreFileName = make(map[int]*fileInfo)
 
-		task.taskMatchRule = NewMatchRule(task.FilterIpRuler, task.FilterDomainRuler)
-		
+		if task.ForceDomainMode {
+			if !strings.HasPrefix(task.ForceDomainSql, "select") {
+				log.Fatalf("only support select operation")
+			}
+			task.queryAndWriteDomains(task.ForceDomainList)
+		}
+		task.NewMatchRule(task.FilterIpRuler, task.FilterDomainRuler)
+
 		if task.FileMaxSizeString != "" {
 			unit := task.FileMaxSizeString[len(task.FileMaxSizeString)-1:]
 			value, _ := strconv.Atoi(task.FileMaxSizeString[:len(task.FileMaxSizeString)-1])
@@ -368,26 +407,36 @@ func newTasks() *Tasks {
 			task.IsGzip = false
 		}
 
+		//初始化sftp
+		if task.Upload.IsUpload {
+			config := UploadConfig{
+				Servers: []SFTPConfig{
+					{
+						Host:     task.Upload.SFTPHost,
+						Port:     task.Upload.SFTPPort,
+						Username: task.Upload.SFTPUser,
+						Password: decString(task.Upload.SFTPPass),
+						Path:     task.Upload.SFTPPath,
+					},
+				},
+				MaxRetries:    task.Upload.MaxRetries,
+				RetryDelay:    task.Upload.RetryDelay,
+				RateLimitKBps: task.Upload.RateLimitKBps, // 1MB/s
+				Timeout:       task.Upload.Timeout,
+			}
+
+			var err error
+
+			if task.Upload.sftpUploadManager, err = NewUploadManager(config); err != nil {
+				log.Fatalf(err.Error())
+			}
+
+		}
+
 		tasks.TaskInfos[taskName] = task
 
 	}
 
-	//////测试udp发送
-	//// 创建 UDP 地址，指定目标主机和端口
-	//serverAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:8080") // 替换为目标服务器的地址和端口
-	//if err != nil {
-	//	log.Fatal("地址解析失败:", err)
-	//}
-	//
-	//// 创建 UDP 套接字
-	//conn, err := net.DialUDP("udp", nil, serverAddr)
-	//if err != nil {
-	//	log.Fatal("连接失败:", err)
-	//}
-	//
-	//tasks.UDPConn = conn
-
-	////
 	return tasks
 }
 
@@ -400,7 +449,6 @@ func readConf(filename string) *Tasks {
 	var tasks Tasks
 	// 调用 Unmarshall 去解码文件内容
 	// 注意要穿配置结构体的指针进去
-	yaml.Unmarshal(configBytes, &tasks)
 	err = yaml.Unmarshal(configBytes, &tasks)
 	if err != nil {
 		log.Fatalln(err)
