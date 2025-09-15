@@ -32,7 +32,7 @@ task_infos:
     file_max_size: 200M
     file_max_time: 1m
     upload:
-      is_upload: true
+      is_upload: false
       sftp_host: "127.0.0.1"
       sftp_port: 2022
       sftp_user: "alipms"
@@ -44,7 +44,7 @@ task_infos:
       timeout: 30s
 
   apt:
-    enable: true
+    enable: false
     filter_ip_ruler:
       - "ip.list"
       - "./v6.list"

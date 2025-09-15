@@ -328,7 +328,7 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int) {
 				if task.Upload.IsUpload {
 					err = task.uploadFile(gzFile)
 					if err != nil {
-						log.Println("[Error Upload] failed: %v", err)
+						log.Printf("[Error Upload] failed: %v", err)
 					} else {
 						log.Printf("[Upload] %s to sftp %s successfully\n", gzFile, task.Upload.SFTPHost)
 						T.deleteFile(gzFile)
@@ -384,40 +384,34 @@ func (T *Tasks) execTransfer() {
 			defer timer.Stop()
 
 			for {
+				fileName := <-T.NewFilePath
+				fileID++
 
-				select {
-				case fileName := <-T.NewFilePath:
-					fileID++
-					if fileName == "done" {
-						log.Printf("thread %d recive done,quit \n", id)
-						return
-					}
-				outer:
-					for {
-						select {
-						case <-timer.C:
-							// 获取文件信息
-							fileInfo, err := os.Stat(fileName)
-							if err != nil {
-								fmt.Println("Error:", err)
-								return
-							}
-							modTime := fileInfo.ModTime()
+				if fileName == "done" {
+					log.Printf("thread %d received done, quitting\n", id)
+					return
+				}
 
-							// 检查文件修改时间是否变化
-							if time.Since(modTime) > 200*time.Millisecond {
-								log.Println("[New] File write completed,start transfer: ", fileName)
+				timer := time.NewTicker(100 * time.Millisecond)
+				defer timer.Stop()
 
-								T.Filter(fileName, id, fileID)
+				for {
+					<-timer.C
 
-								break outer
-							}
-						}
-
+					fileInfo, err := os.Stat(fileName)
+					if err != nil {
+						log.Printf("thread %d: failed to stat file %s: %v\n", id, fileName, err)
+						break // 跳出当前文件处理，继续下一个
 					}
 
+					if time.Since(fileInfo.ModTime()) > 200*time.Millisecond {
+						log.Printf("[New] File write completed, start transfer: %s\n", fileName)
+						T.Filter(fileName, id, fileID)
+						break
+					}
 				}
 			}
+
 		}(i)
 	}
 }

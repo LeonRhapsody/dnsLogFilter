@@ -428,7 +428,7 @@ func newTasks() *Tasks {
 			var err error
 
 			if task.Upload.sftpUploadManager, err = NewUploadManager(config); err != nil {
-				log.Fatalf(err.Error())
+				log.Fatalln(err)
 			}
 
 		}

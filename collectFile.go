@@ -46,7 +46,7 @@ func (T *Tasks) watchSingleDir() {
 
 		if strings.HasSuffix(d.Name(), T.LogType) {
 			Info, _ := d.Info()
-			if time.Now().Sub(Info.ModTime()).Hours() <= 2 {
+			if time.Since(Info.ModTime()).Hours() <= 2 {
 				log.Println("[New] New file (old) found:", path.Join(root))
 				T.NewFilePath <- path.Join(root)
 			}
@@ -217,13 +217,10 @@ func (T *Tasks) offlineWatch() {
 		timer := time.NewTicker(1000 * time.Millisecond)
 		defer timer.Stop()
 		for {
-			select {
-			case <-timer.C:
+			for range timer.C {
 				T.NewFilePath <- "done"
 			}
-
 		}
-
 	}()
 	T.wg.Wait()
 }
@@ -257,7 +254,8 @@ func (T *Tasks) recoverLatestTempFile() {
 		for _, file := range tempFiles {
 			gzFile := strings.TrimSuffix(file, ".tmp")
 			log.Printf("[Recover] Renaming latest temp file %s to %s", file, gzFile)
-			if err := os.Rename(file, gzFile); err != nil {
+			renameErr := os.Rename(file, gzFile)
+			if renameErr != nil {
 				log.Fatalf("Error renaming file %s: %v", file, err)
 			}
 			if task.Upload.IsUpload {

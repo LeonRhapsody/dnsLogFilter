@@ -70,7 +70,7 @@ func parseIPFormat(ipFormat string) ([]string, error) {
 			return nil, err
 		}
 		var ips []string
-		for ip := ip.Mask(ipNet.Mask); ipNet.Contains(ip); inc(ip) {
+		for currentIP := ip.Mask(ipNet.Mask); ipNet.Contains(currentIP); inc(currentIP) {
 			ips = append(ips, ip.String())
 		}
 		return ips, nil

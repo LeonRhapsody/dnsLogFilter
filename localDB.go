@@ -95,9 +95,9 @@ func (dc *DomainCounter) write() error {
 			domain := strings.TrimSpace(parts[0])
 			countStr := strings.TrimSpace(parts[1])
 
-			count, err := strconv.Atoi(countStr)
+			count, atoiErr := strconv.Atoi(countStr)
 			if err != nil {
-				log.Printf("无法将 count 转换为整数: %q，错误: %v", line, err)
+				log.Printf("无法将 count 转换为整数: %q，错误: %v", line, atoiErr)
 				continue
 			}
 
