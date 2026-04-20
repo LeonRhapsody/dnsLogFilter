@@ -109,7 +109,7 @@ type TaskInfo struct {
 	//泛域名
 	DomainFilterRuler *TrieNode
 
-	outPreFileName map[int]*fileInfo
+	outPreFileName []*fileInfo
 
 	//1:domain only 2:ip only 3:all
 	FilterTag int

@@ -9,12 +9,48 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
+// 记录类型常量
+const (
+	RecordTypeA  = 10017 // A记录类型
+	RecordType4A = 10018 // 4A记录类型
+)
+
+// 匹配模式常量
+const (
+	MatchDomainOnly   = 01 // 仅域名
+	MatchRequestIP    = 10 // 仅请求IP
+	MatchResolveIP    = 20 // 仅解析IP
+	MatchRequestIPDom = 11 // 请求IP+域名
+	MatchResolveIPDom = 21 // 解析IP+域名
+)
+
+// IP过滤模式常量
+const (
+	IPFilterNone = 0 // 无过滤
+	IPFilterV4   = 1 // 仅IPv4
+	IPFilterV6   = 2 // 仅IPv6
+	IPFilterBoth = 3 // IPv4+IPv6
+)
+
+// 字符串构建器对象池，用于优化内存分配
+var stringBuilderPool = sync.Pool{
+	New: func() interface{} {
+		var sb strings.Builder
+		sb.Grow(256) // 预分配256字节
+		return &sb
+	},
+}
+
 func (t *TaskInfo) outFormat(srcLogArr []string) string {
-	var result strings.Builder
+	// 从对象池获取字符串构建器
+	builder := stringBuilderPool.Get().(*strings.Builder)
+	builder.Reset()                      // 重置状态
+	defer stringBuilderPool.Put(builder) // 使用完毕后归还到池中
 
 	recordA, record4a := "", ""
 	// 处理记录类型
@@ -26,37 +62,51 @@ func (t *TaskInfo) outFormat(srcLogArr []string) string {
 
 	//特殊处理，不并入主干
 	if t.OutputFormatString == "jituan" {
-		result.WriteString(
-			srcLogArr[4] + "|" +
-				srcLogArr[7] + "|" +
-				srcLogArr[1] + "|" +
-				recordA + "|" +
-				srcLogArr[9] + "|" +
-				srcLogArr[8] + "|" +
-				srcLogArr[10] + "|" +
-				record4a + "|" +
-				srcLogArr[2] + "|" +
-				"0.00" + "|" +
-				srcLogArr[5] + "|" +
-				"320000\n")
+		// 优化字符串拼接，避免多次内存分配
+		builder.WriteString(srcLogArr[4])
+		builder.WriteByte('|')
+		builder.WriteString(srcLogArr[7])
+		builder.WriteByte('|')
+		builder.WriteString(srcLogArr[1])
+		builder.WriteByte('|')
+		builder.WriteString(recordA)
+		builder.WriteByte('|')
+		builder.WriteString(srcLogArr[9])
+		builder.WriteByte('|')
+		builder.WriteString(srcLogArr[8])
+		builder.WriteByte('|')
+		builder.WriteString(srcLogArr[10])
+		builder.WriteByte('|')
+		builder.WriteString(record4a)
+		builder.WriteByte('|')
+		builder.WriteString(srcLogArr[2])
+		builder.WriteByte('|')
+		builder.WriteString("0.00")
+		builder.WriteByte('|')
+		builder.WriteString(srcLogArr[5])
+		builder.WriteByte('|')
+		builder.WriteString("320000")
+		builder.WriteByte('\n')
 
-		return result.String()
+		return builder.String()
 	}
 
 	for _, i := range t.OutputFormat {
 		//由于DRMS日志中没有区分A、4A日志，所以使用DRMS做数据源又像单独输出A、4A日志的话，需要做特殊处理
 		switch i {
-		case 10017:
-			result.WriteString(recordA + "|")
-		case 10018:
-			result.WriteString(record4a + "|")
+		case RecordTypeA:
+			builder.WriteString(recordA)
+			builder.WriteByte('|')
+		case RecordType4A:
+			builder.WriteString(record4a)
+			builder.WriteByte('|')
 		default:
-			result.WriteString(srcLogArr[i] + "|")
-
+			builder.WriteString(srcLogArr[i])
+			builder.WriteByte('|')
 		}
-
 	}
-	return result.String() + "\n"
+	builder.WriteByte('\n')
+	return builder.String()
 
 }
 
@@ -65,70 +115,63 @@ func (r *MatchRule) domainMatch(domain string) bool {
 }
 
 func (r *MatchRule) requestIPMatch(ip string) bool {
-
 	switch r.ipFilterMode {
-	case 0:
+	case IPFilterNone:
 		return false
-	case 1:
+	case IPFilterV4:
 		_, OK := r.v4ListMap.Load(ip)
 		return OK
-	case 2:
+	case IPFilterV6:
 		return r.v6Trie.V6Search(ip)
-	case 3:
+	case IPFilterBoth:
 		if !strings.Contains(ip, ":") {
 			_, OK := r.v4ListMap.Load(ip)
 			return OK
 		} else {
 			return r.v6Trie.V6Search(ip)
-
 		}
 	default:
 		return false
 	}
-
 }
 
 func (r *MatchRule) resolveIPMatch(ips string) bool {
 	switch r.ipFilterMode {
-	case 0:
+	case IPFilterNone:
 		return false
-	case 1:
+	case IPFilterV4:
 		for _, ip := range strings.Split(ips, ";") {
 			_, OK := r.v4ListMap.Load(ip)
 			if OK {
 				return true
 			}
 		}
-	case 2:
+	case IPFilterV6:
 		for _, ip := range strings.Split(ips, ";") {
-
 			if r.v6Trie.V6Search(ip) {
 				return true
 			}
 		}
-	case 3:
+	case IPFilterBoth:
 		if !strings.Contains(ips, ":") {
 			for _, ip := range strings.Split(ips, ";") {
 				_, OK := r.v4ListMap.Load(ip)
 				if OK {
-					return OK
+					return true
 				}
 			}
 		} else {
 			for _, ip := range strings.Split(ips, ";") {
-
 				if r.v6Trie.V6Search(ip) {
 					return true
 				}
 			}
-
 		}
 	default:
 		return false
 	}
 
 	return false
-
 }
 
 func (r *MatchRule) Match(IP string, domain string, result string, mode int) bool {
@@ -141,15 +184,15 @@ func (r *MatchRule) Match(IP string, domain string, result string, mode int) boo
 	//21 解析IP+域名
 
 	switch mode {
-	case 01:
+	case MatchDomainOnly:
 		return r.domainMatch(domain)
-	case 10:
+	case MatchRequestIP:
 		return r.requestIPMatch(IP)
-	case 20:
+	case MatchResolveIP:
 		return r.resolveIPMatch(IP)
-	case 11:
+	case MatchRequestIPDom:
 		return r.domainMatch(domain) && r.requestIPMatch(IP)
-	case 21:
+	case MatchResolveIPDom:
 		return r.domainMatch(domain) && r.resolveIPMatch(IP)
 	default:
 		return false
@@ -244,7 +287,7 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int) {
 	// 读取文件内容
 	TargetContent, err := T.readFile(srcFileName)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("[错误] 读取文件失败 %s: %v", srcFileName, err)
 		return
 	}
 
@@ -301,10 +344,10 @@ func (T *Tasks) Filter(srcFileName string, taskId int, fileId int) {
 			// 目录不存在，创建目录
 			err = os.MkdirAll(task.OutputDir, 0755)
 			if err != nil {
-				log.Fatal("创建目录失败:", err)
+				log.Printf("[错误] 创建输出目录失败 %s: %v", task.OutputDir, err)
 				return
 			}
-			log.Println(task.OutputDir, " output dir create successfully")
+			log.Printf("[信息] 创建输出目录成功: %s", task.OutputDir)
 		}
 
 		//记录当前写入文件的信息

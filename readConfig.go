@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/robfig/cron/v3"
-	"gopkg.in/yaml.v3"
 	"io"
 	"log"
 	"os"
@@ -14,6 +12,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/robfig/cron/v3"
+	"gopkg.in/yaml.v3"
 )
 
 func transferFormat(inputFormatStr string, outputFormatStr string) []int {
@@ -210,6 +211,38 @@ func DomainListToTree(filenames []string) *TrieNode {
 	return trie
 }
 
+// ValidationError 配置验证错误类型
+type ValidationError struct {
+	Field   string
+	Message string
+}
+
+func (e ValidationError) Error() string {
+	return fmt.Sprintf("字段 '%s': %s", e.Field, e.Message)
+}
+
+// 配置验证结果
+type ValidationResult struct {
+	Valid  bool
+	Errors []ValidationError
+}
+
+func (r *ValidationResult) AddError(field, message string) {
+	r.Valid = false
+	r.Errors = append(r.Errors, ValidationError{Field: field, Message: message})
+}
+
+func (r *ValidationResult) GetErrorMessage() string {
+	if r.Valid {
+		return ""
+	}
+	var messages []string
+	for _, err := range r.Errors {
+		messages = append(messages, err.Error())
+	}
+	return strings.Join(messages, "; ")
+}
+
 func fileExists(filename string) bool {
 	// 使用 os.Stat 获取文件信息
 	_, err := os.Stat(filename)
@@ -221,32 +254,112 @@ func fileExists(filename string) bool {
 }
 
 func (T *Tasks) configValid() (bool, error) {
-	if !fileExists(T.InputDir) {
-		return invalid, fmt.Errorf("%s not exsit", T.InputDir)
+	result := &ValidationResult{Valid: true}
+
+	// 验证输入目录
+	if T.InputDir == "" {
+		result.AddError("input_dir", "输入目录不能为空")
+	} else if !fileExists(T.InputDir) {
+		result.AddError("input_dir", fmt.Sprintf("输入目录不存在: %s", T.InputDir))
 	}
 
-	for _, taskInfo := range T.TaskInfos {
+	// 验证线程数
+	if T.AnalyzeThreads <= 0 {
+		result.AddError("analyze_threads", "分析线程数必须大于0")
+	} else if T.AnalyzeThreads > 50 {
+		result.AddError("analyze_threads", "分析线程数不建议超过50")
+	}
+
+	// 验证备份目录
+	if T.BackupDir != "" && !fileExists(T.BackupDir) {
+		result.AddError("backup_dir", fmt.Sprintf("备份目录不存在: %s", T.BackupDir))
+	}
+
+	// 验证输入格式
+	if T.InputFormat == "" {
+		result.AddError("input_format", "输入格式不能为空")
+	}
+
+	// 验证任务配置
+	for taskName, taskInfo := range T.TaskInfos {
 		if !taskInfo.Enable {
 			continue
 		}
+
+		// 验证解析IP匹配选项
 		if taskInfo.IsMatchResolveIP {
 			if len(taskInfo.FilterIpRuler) == 0 {
-				return invalid, fmt.Errorf("if option IsMatchResolveIP is True,FilterIpRuler can't be empty ")
+				result.AddError(fmt.Sprintf("task_infos.%s.filter_ip_ruler", taskName),
+					"如果启用is_match_resolve_ip，filter_ip_ruler不能为空")
 			}
 		}
+
+		// 验证域名过滤文件
 		for _, filename := range taskInfo.FilterDomainRuler {
-			if !fileExists(filename) {
-				return invalid, fmt.Errorf("%s not exsit", filename)
+			if filename != "" && !fileExists(filename) {
+				result.AddError(fmt.Sprintf("task_infos.%s.filter_domain_ruler", taskName),
+					fmt.Sprintf("域名过滤文件不存在: %s", filename))
 			}
 		}
+
+		// 验证IP过滤文件
 		for _, filename := range taskInfo.FilterIpRuler {
-			if !fileExists(filename) {
-				return invalid, fmt.Errorf("%s not exsit", filename)
+			if filename != "" && !fileExists(filename) {
+				result.AddError(fmt.Sprintf("task_infos.%s.filter_ip_ruler", taskName),
+					fmt.Sprintf("IP过滤文件不存在: %s", filename))
+			}
+		}
+
+		// 验证输出目录
+		if taskInfo.OutputDir == "" {
+			result.AddError(fmt.Sprintf("task_infos.%s.output_dir", taskName), "输出目录不能为空")
+		}
+
+		// 验证输出格式
+		if taskInfo.OutputFormatString == "" {
+			result.AddError(fmt.Sprintf("task_infos.%s.output_format", taskName), "输出格式不能为空")
+		}
+
+		// 验证文件大小设置
+		if taskInfo.FileMaxSizeString != "" {
+			if !isValidSizeFormat(taskInfo.FileMaxSizeString) {
+				result.AddError(fmt.Sprintf("task_infos.%s.file_max_size", taskName),
+					"文件大小格式错误，应为数字+单位(K/M/G)")
+			}
+		}
+
+		// 验证SFTP配置
+		if taskInfo.Upload.IsUpload {
+			if taskInfo.Upload.SFTPHost == "" {
+				result.AddError(fmt.Sprintf("task_infos.%s.upload.sftp_host", taskName), "SFTP主机地址不能为空")
+			}
+			if taskInfo.Upload.SFTPPort <= 0 || taskInfo.Upload.SFTPPort > 65535 {
+				result.AddError(fmt.Sprintf("task_infos.%s.upload.sftp_port", taskName), "SFTP端口号无效")
+			}
+			if taskInfo.Upload.SFTPUser == "" {
+				result.AddError(fmt.Sprintf("task_infos.%s.upload.sftp_user", taskName), "SFTP用户名不能为空")
 			}
 		}
 	}
 
-	return valid, nil
+	if !result.Valid {
+		return false, fmt.Errorf(result.GetErrorMessage())
+	}
+
+	return true, nil
+}
+
+// 验证文件大小格式
+func isValidSizeFormat(sizeStr string) bool {
+	if len(sizeStr) == 0 {
+		return false
+	}
+	unit := strings.ToLower(sizeStr[len(sizeStr)-1:])
+	if unit != "k" && unit != "m" && unit != "g" {
+		return false
+	}
+	value, err := strconv.Atoi(sizeStr[:len(sizeStr)-1])
+	return err == nil && value > 0
 }
 
 func (t *TaskInfo) getTaskType() int {
@@ -258,30 +371,26 @@ func (t *TaskInfo) getTaskType() int {
 	//11 请求IP+域名
 	//21 解析IP+域名
 
-	const domainOnly = 01
-	const requestIP = 10
-	const resolveIP = 20
-
 	//仅IP
 	if len(t.FilterDomainRuler) == 0 && len(t.FilterIpRuler) != 0 {
 		if t.IsMatchResolveIP {
-			return resolveIP
+			return 20 // resolveIP
 		} else {
-			return requestIP
+			return 10 // requestIP
 		}
 	}
 
 	//仅域名
 	if len(t.FilterDomainRuler) != 0 && len(t.FilterIpRuler) == 0 {
-		return domainOnly
+		return 01 // domainOnly
 	}
 
 	//IP+域名
 	if len(t.FilterDomainRuler) != 0 && len(t.FilterIpRuler) != 0 {
 		if t.IsMatchResolveIP {
-			return resolveIP + domainOnly
+			return 21 // resolveIP + domainOnly
 		} else {
-			return requestIP + domainOnly
+			return 11 // requestIP + domainOnly
 		}
 	}
 
@@ -289,7 +398,11 @@ func (t *TaskInfo) getTaskType() int {
 }
 
 func newTasks() *Tasks {
-	tasks := readConf("./config.yaml")
+	tasks, err := readConf("./config.yaml")
+	if err != nil {
+		fmt.Printf("读取配置文件错误: %s\n", err.Error())
+		os.Exit(1)
+	}
 
 	if ok, err := tasks.configValid(); !ok {
 		fmt.Printf("配置文件校验错误: %s\n", err.Error())
@@ -372,7 +485,7 @@ func newTasks() *Tasks {
 			task.OutputFormat = transferFormat(tasks.InputFormat, task.OutputFormatString)
 		}
 
-		task.outPreFileName = make(map[int]*fileInfo)
+		task.outPreFileName = make([]*fileInfo, tasks.AnalyzeThreads)
 
 		if task.ForceDomainMode {
 			if !strings.HasPrefix(task.ForceDomainSql, "select") {
@@ -440,10 +553,10 @@ func newTasks() *Tasks {
 	return tasks
 }
 
-func readConf(filename string) *Tasks {
+func readConf(filename string) (*Tasks, error) {
 	configBytes, err := os.ReadFile(filename)
 	if err != nil {
-		log.Fatalln(err)
+		return nil, fmt.Errorf("failed to read config file %s: %w", filename, err)
 	}
 	// 创建配置文件的结构体
 	var tasks Tasks
@@ -451,8 +564,7 @@ func readConf(filename string) *Tasks {
 	// 注意要穿配置结构体的指针进去
 	err = yaml.Unmarshal(configBytes, &tasks)
 	if err != nil {
-		log.Fatalln(err)
+		return nil, fmt.Errorf("failed to parse config file %s: %w", filename, err)
 	}
-	return &tasks
-
+	return &tasks, nil
 }

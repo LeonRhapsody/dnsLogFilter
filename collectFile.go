@@ -68,13 +68,15 @@ func (T *Tasks) watchSingleDir() {
 					if strings.HasSuffix(event.Name, T.LogType) {
 
 						log.Println("[New] New file found:", event.Name)
-						T.NewFilePath <- event.Name
+						go func(name string) {
+							T.NewFilePath <- name
+						}(event.Name)
 
 					}
 
 				}
 			case err := <-watcher.Errors:
-				log.Fatal("Error:", err)
+				log.Println("Error:", err)
 			}
 		}
 	}()
@@ -171,19 +173,18 @@ func (T *Tasks) watchMultipleDir() {
 
 						} else {
 							if !strings.HasSuffix(event.Name, ".CHK") && !strings.HasSuffix(event.Name, ".AUDIT") {
-								log.Println("New file found:", event.Name)
-								T.NewFilePath <- event.Name
+								log.Println("[New] New file found:", event.Name)
+								go func(name string) {
+									T.NewFilePath <- name
+								}(event.Name)
 							}
-							log.Println("[New] New file found:", event.Name)
-							T.NewFilePath <- event.Name
-							//}
 
 						}
 
 					}
 				}
 			case err := <-watcher.Errors:
-				log.Fatal("Error:", err)
+				log.Println("Error:", err)
 			}
 		}
 	}()
